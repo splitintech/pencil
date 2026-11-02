@@ -205,6 +205,7 @@ void Editor::copy()
 
 void Editor::copyAndCut()
 {
+    if (!canEditLayer(layers()->currentLayer())) { return; }
     copy();
 
     Layer* currentLayer = layers()->currentLayer();
@@ -227,17 +228,13 @@ void Editor::copyAndCut()
 void Editor::pasteFromPreviousFrame()
 {
     Layer* currentLayer = layers()->currentLayer();
+    if (!canEditLayer(currentLayer)) { return; }
     int prevFrame = currentLayer->getPreviousKeyFramePosition(mFrame);
     if (!currentLayer->keyExists(mFrame) || prevFrame == mFrame)
     {
         return;
     }
 
-    // Prevents pasting on an invisible layer, as this is likely a mistake and can be confusing for users, so show a warning and prevent the action
-    if (!currentLayer->visible()) {
-        mScribbleArea->showLayerNotVisibleWarning();
-        return;
-    }
 
     if (currentLayer->type() == Layer::BITMAP)
     {
@@ -263,6 +260,7 @@ void Editor::pasteFromPreviousFrame()
 
 void Editor::pasteToCanvas(BitmapImage* bitmapImage, int frameNumber)
 {
+    if (!canEditLayer(layers()->currentLayer())) { return; }
     Layer* currentLayer = layers()->currentLayer();
 
     Q_ASSERT(currentLayer->type() == Layer::BITMAP);
@@ -293,6 +291,7 @@ void Editor::pasteToCanvas(BitmapImage* bitmapImage, int frameNumber)
 
 void Editor::pasteToCanvas(VectorImage* vectorImage, int frameNumber)
 {
+    if (!canEditLayer(layers()->currentLayer())) { return; }
     Layer* currentLayer = layers()->currentLayer();
 
     Q_ASSERT(currentLayer->type() == Layer::VECTOR);
@@ -307,6 +306,7 @@ void Editor::pasteToCanvas(VectorImage* vectorImage, int frameNumber)
 
 void Editor::pasteToFrames()
 {
+    if (!canEditLayer(layers()->currentLayer())) { return; }
     auto clipboardFrames = clipboards()->getClipboardFrames();
     Q_ASSERT(!clipboardFrames.empty());
     Layer* currentLayer = layers()->currentLayer();
@@ -348,16 +348,12 @@ void Editor::pasteToFrames()
 void Editor::paste()
 {
     Layer* currentLayer = layers()->currentLayer();
+    if (!canEditLayer(currentLayer)) { return; }
 
     Q_ASSERT(currentLayer != nullptr);
 
     if (!canPaste()) { return; }
 
-    // Prevents pasting on an invisible layer, as this is likely a mistake and can be confusing for users, so show a warning and prevent the action
-    if (!currentLayer->visible()) {
-        mScribbleArea->showLayerNotVisibleWarning();
-        return;
-    }
 
     if (clipboards()->framesIsEmpty()) {
 
@@ -382,6 +378,7 @@ void Editor::paste()
 
 void Editor::flipSelection(bool flipVertical)
 {
+    if (!canEditLayer(layers()->currentLayer())) { return; }
     if (flipVertical) {
         backup(tr("Flip selection vertically"));
     } else {
@@ -392,6 +389,7 @@ void Editor::flipSelection(bool flipVertical)
 
 void Editor::repositionImage(QPoint transform, int frame)
 {
+    if (!canEditLayer(layers()->currentLayer())) { return; }
     if (layers()->currentLayer()->type() == Layer::BITMAP)
     {
         scrubTo(frame);
@@ -810,10 +808,7 @@ void Editor::selectAll() const
     QRectF rect;
     
     // Prevents Selection of an invisible layer, as this is likely a mistake and can be confusing for users, so show a warning and prevent the action
-    if (!layer->visible()) {
-        mScribbleArea->showLayerNotVisibleWarning();
-        return;
-    }
+    if (!canEditLayer(layer)) { return; }
 
     if (layer->type() == Layer::BITMAP)
     {
@@ -925,11 +920,7 @@ KeyFrame* Editor::addKeyFrame(const int layerNumber, int frameIndex)
     Layer* layer = mObject->getLayer(layerNumber);
     Q_ASSERT(layer);
 
-    if (!layer->visible())
-    {
-        mScribbleArea->showLayerNotVisibleWarning();
-        return nullptr;
-    }
+    if (!canEditLayer(layer)) { return nullptr; }
 
     // Find next available space for a keyframe (where either no key exists or there is an empty sound key)
     while (layer->keyExists(frameIndex))
@@ -965,11 +956,7 @@ void Editor::removeKey()
     Layer* layer = layers()->currentLayer();
     Q_ASSERT(layer != nullptr);
 
-    if (!layer->visible())
-    {
-        mScribbleArea->showLayerNotVisibleWarning();
-        return;
-    }
+    if (!canEditLayer(layer)) { return; }
 
     if (!layer->keyExistsWhichCovers(currentFrame()))
     {
@@ -1010,10 +997,17 @@ void Editor::scrubPreviousKeyFrame()
 void Editor::switchVisibilityOfLayer(int layerNumber)
 {
     Layer* layer = mObject->getLayer(layerNumber);
-    if (layer != nullptr) layer->switchVisibility();
-
-    // Deselect all to prevent confusion, as the user might have selected something on a layer that is now invisible, and this could lead to confusion
-    deselectAll();
+    if (layer == nullptr) { return; }
+    if (layer->visible())
+    {
+        if (layerNumber == currentLayerIndex())
+        {
+            static_cast<MoveTool*>(tools()->getTool(MOVE))->applyTransformationAndDeselect();
+            deselectAll();
+        }
+        layer->deselectAll();
+    }
+    layer->switchVisibility();
 
     mScribbleArea->onLayerChanged();
 
@@ -1048,6 +1042,17 @@ void Editor::prepareSave()
     {
         mgr->save(mObject.get());
     }
+}
+
+bool Editor::canEditLayer(const Layer* layer, bool showWarning) const
+{
+    if (layer == nullptr) { return false; }
+    if (layer->visible()) { return true; }
+    if (showWarning && mScribbleArea)
+    {
+        mScribbleArea->showLayerNotVisibleWarning();
+    }
+    return false;
 }
 
 void Editor::clearCurrentFrame()

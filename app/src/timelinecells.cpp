@@ -892,6 +892,13 @@ void TimeLineCells::mousePressEvent(QMouseEvent* event)
                     }
 
                     Layer *currentLayer = mEditor->object()->getLayer(layerNumber);
+                    if (!mEditor->canEditLayer(currentLayer))
+                    {
+                        mCanMoveFrame = false;
+                        mCanBoxSelect = false;
+                        mClickSelecting = true;
+                        break;
+                    }
 
                     // Check if we are using the alt key
                     if (event->modifiers() == Qt::AltModifier)
@@ -1021,6 +1028,8 @@ void TimeLineCells::mouseMoveEvent(QMouseEvent* event)
                     {
                         Layer *currentLayer = mEditor->object()->getLayer(mStartLayerNumber);
 
+                        if (!currentLayer->visible()) { return; }
+
                         // Check if the frame we clicked was selected
                         if (mCanMoveFrame) {
 
@@ -1061,7 +1070,7 @@ void TimeLineCells::mouseReleaseEvent(QMouseEvent* event)
         Layer* currentLayer = mEditor->layers()->getLayer(mCurrentLayerNumber);
         Q_ASSERT(currentLayer);
 
-        if (mMovingFrames)
+        if (mMovingFrames && mEditor->canEditLayer(currentLayer))
         {
             int posUnderCursor = getFrameNumber(mMousePressX);
             int offset = frameNumber - posUnderCursor;
@@ -1079,7 +1088,7 @@ void TimeLineCells::mouseReleaseEvent(QMouseEvent* event)
             emit mEditor->framesModified();
             updateContent();
         }
-        else if (!mTimeLine->scrubbing && !mMovingFrames && !mClickSelecting && !mBoxSelecting)
+        else if (currentLayer->visible() && !mTimeLine->scrubbing && !mMovingFrames && !mClickSelecting && !mBoxSelecting)
         {
             // De-selecting if we didn't move, scrub nor select anything
             bool multipleSelection = (event->modifiers() == Qt::ControlModifier);
@@ -1144,7 +1153,10 @@ void TimeLineCells::mouseDoubleClickEvent(QMouseEvent* event)
 
             // The release event will toggle the frame on again, so we make sure it gets
             // deselected now instead.
-            layer->setFrameSelected(frameNumber, true);
+            if (mEditor->canEditLayer(layer))
+            {
+                layer->setFrameSelected(frameNumber, true);
+            }
         }
         else if (mType == TIMELINE_CELL_TYPE::Layers && event->pos().x() >= 15)
         {

@@ -424,6 +424,10 @@ void ScribbleArea::keyPressEvent(QKeyEvent *event)
 
 void ScribbleArea::keyEventForSelection(QKeyEvent* event)
 {
+    bool modifiesSelection = event->key() == Qt::Key_Left || event->key() == Qt::Key_Right
+        || event->key() == Qt::Key_Up || event->key() == Qt::Key_Down
+        || event->key() == Qt::Key_Return || event->key() == Qt::Key_Backspace;
+    if (modifiesSelection && !mEditor->canEditLayer(mEditor->layers()->currentLayer())) { return; }
     auto selectMan = mEditor->select();
     switch (event->key())
     {
@@ -1225,6 +1229,7 @@ void ScribbleArea::endStroke()
 
 void ScribbleArea::flipSelection(bool flipVertical)
 {
+    if (!mEditor->canEditLayer(mEditor->layers()->currentLayer())) { return; }
     mEditor->select()->flipSelection(flipVertical);
 }
 
@@ -1344,6 +1349,7 @@ QPointF ScribbleArea::getCentralPoint()
 
 void ScribbleArea::applyTransformedSelection()
 {
+    if (!mEditor->canEditLayer(mEditor->layers()->currentLayer())) { return; }
     mCanvasPainter.ignoreTransformedSelection();
 
     Layer* layer = mEditor->layers()->currentLayer();
@@ -1454,6 +1460,7 @@ BaseTool* ScribbleArea::currentTool() const
 
 void ScribbleArea::deleteSelection()
 {
+    if (!mEditor->canEditLayer(mEditor->layers()->currentLayer())) { return; }
     auto selectMan = mEditor->select();
     if (selectMan->somethingSelected())      // there is something selected
     {
@@ -1486,11 +1493,7 @@ void ScribbleArea::clearImage()
     Layer* layer = mEditor->layers()->currentLayer();
     if (layer == nullptr) { return; }
 
-    // Clearing an invisible layer is likely a mistake, so show a warning and prevent the action
-    if (!layer->visible()) {
-        showLayerNotVisibleWarning();
-        return;
-    }
+    if (!mEditor->canEditLayer(layer)) { return; }
 
     if (layer->type() == Layer::VECTOR)
     {
