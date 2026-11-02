@@ -101,8 +101,9 @@ jobs:
       - name: Build Pencil2D
         run: ${{runner.os != 'Windows' && '${BUILD_CMD} make -C build' || 'cd build; nmake'}}
 
+      # The offscreen plugin supports the modal warning dialogs exercised by tests.
       - name: Run tests
-        run: ${{runner.os == 'Linux' && '${BUILD_CMD}' || ''}} env QT_QPA_PLATFORM=minimal build/tests/tests
+        run: ${{runner.os == 'Linux' && '${BUILD_CMD}' || ''}} env QT_QPA_PLATFORM=offscreen build/tests/tests
 
       - name: Create package
         id: package
