@@ -148,6 +148,21 @@ bool privateDirectory(const QString& path)
     return false;
 #endif
 }
+QString canonicalPath(const QString& path)
+{
+    QString resolved = QFileInfo(path).canonicalFilePath();
+#ifdef Q_OS_WIN
+    if (resolved.isEmpty()) { return {}; }
+    QString native = QDir::toNativeSeparators(resolved);
+    DWORD size = GetLongPathNameW(reinterpret_cast<LPCWSTR>(native.utf16()), nullptr, 0);
+    if (!size) { return {}; }
+    QVector<wchar_t> buffer(static_cast<int>(size));
+    DWORD length = GetLongPathNameW(reinterpret_cast<LPCWSTR>(native.utf16()), buffer.data(), size);
+    if (!length || length >= size) { return {}; }
+    resolved = QDir::fromNativeSeparators(QString::fromWCharArray(buffer.constData(), static_cast<int>(length)));
+#endif
+    return resolved;
+}
 QJsonArray operations()
 {
     QFile file(":/automation/operations.json");
@@ -251,7 +266,9 @@ bool AutomationBridge::start(const QString& directory, const QStringList& worksp
     {
         QFileInfo info(root);
         if (!info.isAbsolute() || !info.isDir()) { return false; }
-        mWorkspaces.append(info.canonicalFilePath());
+        QString canonical = canonicalPath(root);
+        if (canonical.isEmpty()) { return false; }
+        mWorkspaces.append(canonical);
     }
     mSessionId = QUuid::createUuid().toString(QUuid::WithoutBraces);
     mDocumentId = QUuid::createUuid().toString(QUuid::WithoutBraces);
@@ -395,11 +412,11 @@ QString AutomationBridge::grantedPath(const QString& path, bool mustExist) const
 {
     QFileInfo info(path);
     require(info.isAbsolute() && !path.contains(QChar(0)), "invalid_path", "Expected an absolute path");
-    QString resolved = info.canonicalFilePath();
+    QString resolved = canonicalPath(path);
     require(!info.isSymLink() || !resolved.isEmpty(), "invalid_path", "Dangling symbolic links are not output paths");
     if (resolved.isEmpty() && !mustExist)
     {
-        QString parent = QFileInfo(info.absolutePath()).canonicalFilePath();
+        QString parent = canonicalPath(info.absolutePath());
         require(!parent.isEmpty(), "invalid_path", "Parent directory must exist");
         resolved = QDir(parent).filePath(info.fileName());
     }
