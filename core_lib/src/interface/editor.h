@@ -109,7 +109,8 @@ public:
     Status openObject(const QString& strFilePath, const std::function<void(int)>& progressChanged, const std::function<void(int)>& progressRangeChanged);
     Status setObject(Object* object);
     void updateObject();
-    void prepareSave();
+    void prepareSave(bool markHistoryClean = true);
+    std::unique_ptr<Object> snapshot() const;
 
     void setScribbleArea(ScribbleArea* pScirbbleArea) { mScribbleArea = pScirbbleArea; }
     ScribbleArea* getScribbleArea() { return mScribbleArea; }

@@ -23,11 +23,16 @@ contains(VERSION, ^99\.0\.0\..*) {
 }
 
 CONFIG += strict_c strict_c++
+equals(STANLEE_AUTOMATION, 1) {
+    DEFINES += STANLEE_AUTOMATION
+    CONFIG += c++17
+}
 greaterThan(QT_MAJOR_VERSION, 5) {
     CONFIG += c++17
 } else {
     CONFIG += c++11
 }
+equals(STANLEE_AUTOMATION, 1): CONFIG += c++17
 
 # utf8_source is only for Qt 5, it is the default since Qt 6
 CONFIG += msvc_mp utf8_source

@@ -1019,12 +1019,24 @@ bool Editor::canSwapLayers(int layerIndexLeft, int layerIndexRight) const
     return mObject->canSwapLayers(layerIndexLeft, layerIndexRight);
 }
 
-void Editor::prepareSave()
+void Editor::prepareSave(bool markHistoryClean)
 {
     for (auto mgr : mAllManagers)
     {
+        if (!markHistoryClean && mgr == mUndoRedoManager) { continue; }
         mgr->save(mObject.get());
     }
+}
+
+std::unique_ptr<Object> Editor::snapshot() const
+{
+    auto result = mObject->cloneForSnapshot();
+    if (!result) { return nullptr; }
+    for (auto manager : mAllManagers)
+    {
+        if (manager != mUndoRedoManager) { manager->save(result.get()); }
+    }
+    return result;
 }
 
 void Editor::clearCurrentFrame()

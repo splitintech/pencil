@@ -11,6 +11,12 @@ CONFIG += precompile_header lrelease embed_translations
 QT += core widgets gui xml multimedia svg network
 
 TARGET = pencil2d
+equals(STANLEE_AUTOMATION, 1) {
+    SOURCES += src/automationbridge.cpp
+    HEADERS += src/automationbridge.h
+    RESOURCES += data/automation.qrc
+    TARGET = pencil2d-stanlee
+}
 
 RESOURCES += data/app.qrc
 
@@ -262,6 +268,11 @@ macx {
 
     QMAKE_TARGET_BUNDLE_PREFIX += org.pencil2d
     QMAKE_APPLICATION_BUNDLE_NAME = Pencil2D
+    equals(STANLEE_AUTOMATION, 1) {
+        QMAKE_APPLICATION_BUNDLE_NAME = Pencil2D-Stanlee
+        QMAKE_TARGET_BUNDLE_PREFIX = net.splitin
+        QMAKE_INFO_PLIST = data/Info.stanlee.plist
+    }
 }
 
 win32 {

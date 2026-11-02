@@ -26,6 +26,8 @@ GNU General Public License for more details.
 #include "layerbitmap.h"
 #include "layervector.h"
 #include "layersound.h"
+#include "layercamera.h"
+#include "bitmapimage.h"
 
 
 TEST_CASE("Object::addXXXLayer()")
@@ -259,3 +261,54 @@ void TestObject::testExportColorPalette()
 
 }
 */
+
+// Copyright (C) 2026 SplitIn contributors. GPL-2.0-only.
+TEST_CASE("Native snapshots preserve live content and source working files")
+{
+    QTemporaryDir directory;
+    REQUIRE(directory.isValid());
+    Object source;
+    source.init();
+    auto camera = source.addNewCameraLayer();
+    camera->setViewRect(QRect(-123, -78, 246, 156));
+    auto bitmap = source.addNewBitmapLayer();
+    source.addNewVectorLayer();
+    source.addNewSoundLayer();
+    bitmap->addOrReplaceKeyFrame(1, new BitmapImage(QRect(0, 0, 8, 8), Qt::red));
+    FileManager manager;
+    QString originalPath = directory.filePath("original.pclx");
+    REQUIRE(manager.save(&source, originalPath).ok());
+    source.setFilePath(originalPath);
+    auto image = bitmap->getBitmapImageAtFrame(1);
+    image->setPixel(1, 1, qRgba(0, 255, 0, 255));
+    image->modification();
+    source.modification();
+    QString backingFile = image->fileName();
+    QDir originalData(source.dataDir());
+    QStringList assetsBefore = originalData.entryList(QDir::Files);
+    QFile originalFile(originalPath);
+    REQUIRE(originalFile.open(QIODevice::ReadOnly));
+    QByteArray originalBytes = originalFile.readAll();
+    originalFile.close();
+
+    auto snapshot = source.cloneForSnapshot();
+    REQUIRE(snapshot != nullptr);
+    REQUIRE(snapshot->workingDir() != source.workingDir());
+    REQUIRE(snapshot->getLayerCount() == source.getLayerCount());
+    auto snapshotCamera = static_cast<LayerCamera*>(snapshot->getLayer(0));
+    REQUIRE(snapshotCamera->getViewRect() == camera->getViewRect());
+    REQUIRE(manager.save(snapshot.get(), directory.filePath("snapshot.pclx")).ok());
+    REQUIRE(source.filePath() == originalPath);
+    REQUIRE(source.isModified());
+    REQUIRE(image->isModified());
+    REQUIRE(image->fileName() == backingFile);
+    REQUIRE(originalData.entryList(QDir::Files) == assetsBefore);
+    REQUIRE(originalFile.open(QIODevice::ReadOnly));
+    REQUIRE(originalFile.readAll() == originalBytes);
+    auto copiedBitmap = static_cast<LayerBitmap*>(snapshot->getLayer(1))->getBitmapImageAtFrame(1);
+    copiedBitmap->setPixel(1, 1, qRgba(0, 0, 255, 255));
+    REQUIRE(image->pixel(1, 1) == qRgba(0, 255, 0, 255));
+    REQUIRE_FALSE(manager.save(snapshot.get(), directory.filePath("missing/failure.pclx")).ok());
+    REQUIRE(source.isModified());
+    REQUIRE(image->isModified());
+}

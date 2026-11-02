@@ -161,6 +161,8 @@ public:
     ObjectData* data() { return &mData; }
     const ObjectData* data() const { return &mData; }
     void setData(const ObjectData&);
+    /** Deep native content copy with independent working files for export/checkpoints. */
+    std::unique_ptr<Object> cloneForSnapshot() const;
 
     int totalKeyFrameCount() const;
     void updateActiveFrames(int frame) const;

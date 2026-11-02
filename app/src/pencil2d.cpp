@@ -35,6 +35,12 @@ GNU General Public License for more details.
 #include "mainwindow2.h"
 #include "pencildef.h"
 #include "platformhandler.h"
+#ifdef STANLEE_AUTOMATION
+#include "automationbridge.h"
+#include "object.h"
+#include "editor.h"
+#include "objectdata.h"
+#endif
 
 
 #if QT_VERSION < QT_VERSION_CHECK(5, 14, 0)
@@ -49,6 +55,18 @@ Pencil2D::Pencil2D(int& argc, char** argv) :
     setOrganizationDomain("pencil2d.org");
     setApplicationName("Pencil2D");
     setApplicationDisplayName("Pencil2D");
+#ifdef STANLEE_AUTOMATION
+    setOrganizationName("SplitIn");
+    setOrganizationDomain("splitin.net");
+    setApplicationName("Pencil2D-Stanlee");
+    setApplicationDisplayName("Pencil2D–Stanlee");
+    QString settingsDirectory = qEnvironmentVariable("STANLEE_SETTINGS_DIR");
+    if (!settingsDirectory.isEmpty())
+    {
+        QSettings::setDefaultFormat(QSettings::IniFormat);
+        QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, settingsDirectory);
+    }
+#endif
 
     // Set application version
     setApplicationVersion(APP_VERSION);
@@ -109,6 +127,10 @@ Status Pencil2D::handleCommandLineOptions()
 bool Pencil2D::isInstanceOpen()
 {
     QDir appDir = QDir(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)).filePath("Pencil2D");
+#ifdef STANLEE_AUTOMATION
+    QString settingsDirectory = qEnvironmentVariable("STANLEE_SETTINGS_DIR");
+    if (!settingsDirectory.isEmpty()) { appDir = QDir(settingsDirectory).filePath("instance"); }
+#endif
     appDir.mkpath(".");
     mProcessLock.reset(new QLockFile(appDir.absoluteFilePath("pencil2d-process.lock")));
     if (!mProcessLock->tryLock(10))
@@ -174,5 +196,23 @@ void Pencil2D::prepareGuiStartup(const QString& inputPath)
     connect(this, &Pencil2D::openFileRequested, mainWindow.get(), &MainWindow2::openFile);
     mainWindow->show();
 
+#ifdef STANLEE_AUTOMATION
+    if (qEnvironmentVariable("STANLEE_AUTOMATION") == "1")
+    {
+        auto object = new Object;
+        object->init();
+        object->addNewCameraLayer(); object->addNewBitmapLayer();
+        object->data()->setCurrentLayer(1);
+        mainWindow->mEditor->setObject(object);
+        auto bridge = new AutomationBridge(mainWindow.get());
+        QStringList workspaces = qEnvironmentVariable("STANLEE_WORKSPACES").split(QDir::listSeparator(), Qt::SkipEmptyParts);
+        if (!bridge->start(qEnvironmentVariable("STANLEE_DISCOVERY_DIR"), workspaces))
+        {
+            qCritical("Automation refused: private discovery directory and valid workspaces are required");
+            bridge->deleteLater();
+        }
+        return;
+    }
+#endif
     mainWindow->openStartupFile(inputPath);
 }

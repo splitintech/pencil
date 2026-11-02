@@ -1,0 +1,1232 @@
+{
+  "schema_version": 1,
+  "protocol_version": 1,
+  "operations": [
+    {
+      "id": "session.capabilities",
+      "input": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "output": {
+        "type": "object",
+        "properties": {
+          "session_id": {
+            "type": "string"
+          },
+          "document_id": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "session_id",
+          "document_id",
+          "revision"
+        ]
+      },
+      "effects": "observation",
+      "requires_revision": false,
+      "undo": "not_applicable",
+      "cancellation": "before_dispatch",
+      "native": "AutomationBridge::execute",
+      "path_parameters": [],
+      "coverage_entries": [],
+      "platform_qualification": {
+        "macos": "unqualified",
+        "windows": "unqualified",
+        "linux": "unqualified"
+      },
+      "preconditions": [
+        "authenticated_session"
+      ],
+      "failures": [
+        "unauthorized",
+        "protocol_mismatch",
+        "invalid_arguments",
+        "unsupported_capability",
+        "transport_failure"
+      ]
+    },
+    {
+      "id": "document.inspect",
+      "input": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "output": {
+        "type": "object",
+        "properties": {
+          "session_id": {
+            "type": "string"
+          },
+          "document_id": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "session_id",
+          "document_id",
+          "revision"
+        ]
+      },
+      "effects": "observation",
+      "requires_revision": false,
+      "undo": "not_applicable",
+      "cancellation": "before_dispatch",
+      "native": "AutomationBridge::state",
+      "path_parameters": [],
+      "coverage_entries": [],
+      "platform_qualification": {
+        "macos": "unqualified",
+        "windows": "unqualified",
+        "linux": "unqualified"
+      },
+      "preconditions": [
+        "authenticated_session"
+      ],
+      "failures": [
+        "unauthorized",
+        "protocol_mismatch",
+        "invalid_arguments",
+        "unsupported_capability",
+        "transport_failure"
+      ]
+    },
+    {
+      "id": "events.poll",
+      "input": {
+        "type": "object",
+        "properties": {
+          "after": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 2147483647
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "output": {
+        "type": "object",
+        "properties": {
+          "session_id": {
+            "type": "string"
+          },
+          "document_id": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "session_id",
+          "document_id",
+          "revision"
+        ]
+      },
+      "effects": "observation",
+      "requires_revision": false,
+      "undo": "not_applicable",
+      "cancellation": "before_dispatch",
+      "native": "AutomationBridge::changed",
+      "path_parameters": [],
+      "coverage_entries": [],
+      "platform_qualification": {
+        "macos": "unqualified",
+        "windows": "unqualified",
+        "linux": "unqualified"
+      },
+      "preconditions": [
+        "authenticated_session"
+      ],
+      "failures": [
+        "unauthorized",
+        "protocol_mismatch",
+        "invalid_arguments",
+        "unsupported_capability",
+        "transport_failure"
+      ]
+    },
+    {
+      "id": "frame.preview",
+      "input": {
+        "type": "object",
+        "properties": {
+          "frame": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000000
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "output": {
+        "type": "object",
+        "properties": {
+          "session_id": {
+            "type": "string"
+          },
+          "document_id": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "session_id",
+          "document_id",
+          "revision"
+        ]
+      },
+      "effects": "observation",
+      "requires_revision": false,
+      "undo": "not_applicable",
+      "cancellation": "before_dispatch",
+      "native": "Object::paintImage; LayerCamera::getViewAtFrame",
+      "path_parameters": [],
+      "coverage_entries": [],
+      "platform_qualification": {
+        "macos": "unqualified",
+        "windows": "unqualified",
+        "linux": "unqualified"
+      },
+      "preconditions": [
+        "authenticated_session"
+      ],
+      "failures": [
+        "unauthorized",
+        "protocol_mismatch",
+        "invalid_arguments",
+        "unsupported_capability",
+        "transport_failure"
+      ]
+    },
+    {
+      "id": "document.new",
+      "input": {
+        "type": "object",
+        "properties": {
+          "discard": {
+            "type": "boolean"
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "output": {
+        "type": "object",
+        "properties": {
+          "session_id": {
+            "type": "string"
+          },
+          "document_id": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "session_id",
+          "document_id",
+          "revision"
+        ]
+      },
+      "effects": "document_replace",
+      "requires_revision": true,
+      "undo": "not_applicable",
+      "cancellation": "before_dispatch",
+      "native": "Editor::setObject",
+      "path_parameters": [],
+      "coverage_entries": [],
+      "platform_qualification": {
+        "macos": "unqualified",
+        "windows": "unqualified",
+        "linux": "unqualified"
+      },
+      "preconditions": [
+        "authenticated_session",
+        "current_document_id",
+        "expected_revision",
+        "editor_idle"
+      ],
+      "failures": [
+        "unauthorized",
+        "protocol_mismatch",
+        "invalid_arguments",
+        "unsupported_capability",
+        "transport_failure",
+        "invalid_document",
+        "stale_revision",
+        "busy"
+      ]
+    },
+    {
+      "id": "document.open",
+      "input": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "discard": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "additionalProperties": false
+      },
+      "output": {
+        "type": "object",
+        "properties": {
+          "session_id": {
+            "type": "string"
+          },
+          "document_id": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "session_id",
+          "document_id",
+          "revision"
+        ]
+      },
+      "effects": "document_replace",
+      "requires_revision": true,
+      "undo": "not_applicable",
+      "cancellation": "before_dispatch",
+      "native": "FileManager::load; Editor::setObject",
+      "path_parameters": [
+        "path"
+      ],
+      "coverage_entries": [],
+      "platform_qualification": {
+        "macos": "unqualified",
+        "windows": "unqualified",
+        "linux": "unqualified"
+      },
+      "preconditions": [
+        "authenticated_session",
+        "current_document_id",
+        "expected_revision",
+        "editor_idle"
+      ],
+      "failures": [
+        "unauthorized",
+        "protocol_mismatch",
+        "invalid_arguments",
+        "unsupported_capability",
+        "transport_failure",
+        "invalid_document",
+        "stale_revision",
+        "busy"
+      ]
+    },
+    {
+      "id": "document.save",
+      "input": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "overwrite": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "additionalProperties": false
+      },
+      "output": {
+        "type": "object",
+        "properties": {
+          "session_id": {
+            "type": "string"
+          },
+          "document_id": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "session_id",
+          "document_id",
+          "revision"
+        ]
+      },
+      "effects": "file",
+      "requires_revision": true,
+      "undo": "not_applicable",
+      "cancellation": "before_dispatch",
+      "native": "Editor::prepareSave(false); FileManager::save",
+      "path_parameters": [
+        "path"
+      ],
+      "coverage_entries": [],
+      "platform_qualification": {
+        "macos": "unqualified",
+        "windows": "unqualified",
+        "linux": "unqualified"
+      },
+      "preconditions": [
+        "authenticated_session",
+        "current_document_id",
+        "expected_revision",
+        "editor_idle"
+      ],
+      "failures": [
+        "unauthorized",
+        "protocol_mismatch",
+        "invalid_arguments",
+        "unsupported_capability",
+        "transport_failure",
+        "invalid_document",
+        "stale_revision",
+        "busy"
+      ]
+    },
+    {
+      "id": "layer.create",
+      "input": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "enum": [
+              "bitmap",
+              "vector",
+              "sound",
+              "camera"
+            ]
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          }
+        },
+        "required": [
+          "type",
+          "name"
+        ],
+        "additionalProperties": false
+      },
+      "output": {
+        "type": "object",
+        "properties": {
+          "session_id": {
+            "type": "string"
+          },
+          "document_id": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "session_id",
+          "document_id",
+          "revision"
+        ]
+      },
+      "effects": "document",
+      "requires_revision": true,
+      "undo": "not_yet_supported",
+      "cancellation": "before_dispatch",
+      "native": "LayerManager::createLayer",
+      "path_parameters": [],
+      "coverage_entries": [],
+      "platform_qualification": {
+        "macos": "unqualified",
+        "windows": "unqualified",
+        "linux": "unqualified"
+      },
+      "preconditions": [
+        "authenticated_session",
+        "current_document_id",
+        "expected_revision",
+        "editor_idle"
+      ],
+      "failures": [
+        "unauthorized",
+        "protocol_mismatch",
+        "invalid_arguments",
+        "unsupported_capability",
+        "transport_failure",
+        "invalid_document",
+        "stale_revision",
+        "busy"
+      ]
+    },
+    {
+      "id": "layer.select",
+      "input": {
+        "type": "object",
+        "properties": {
+          "index": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 10000
+          }
+        },
+        "required": [
+          "index"
+        ],
+        "additionalProperties": false
+      },
+      "output": {
+        "type": "object",
+        "properties": {
+          "session_id": {
+            "type": "string"
+          },
+          "document_id": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "session_id",
+          "document_id",
+          "revision"
+        ]
+      },
+      "effects": "selection",
+      "requires_revision": true,
+      "undo": "not_applicable",
+      "cancellation": "before_dispatch",
+      "native": "LayerManager::setCurrentLayer",
+      "path_parameters": [],
+      "coverage_entries": [],
+      "platform_qualification": {
+        "macos": "unqualified",
+        "windows": "unqualified",
+        "linux": "unqualified"
+      },
+      "preconditions": [
+        "authenticated_session",
+        "current_document_id",
+        "expected_revision",
+        "editor_idle"
+      ],
+      "failures": [
+        "unauthorized",
+        "protocol_mismatch",
+        "invalid_arguments",
+        "unsupported_capability",
+        "transport_failure",
+        "invalid_document",
+        "stale_revision",
+        "busy"
+      ]
+    },
+    {
+      "id": "timeline.scrub",
+      "input": {
+        "type": "object",
+        "properties": {
+          "frame": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000000
+          }
+        },
+        "required": [
+          "frame"
+        ],
+        "additionalProperties": false
+      },
+      "output": {
+        "type": "object",
+        "properties": {
+          "session_id": {
+            "type": "string"
+          },
+          "document_id": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "session_id",
+          "document_id",
+          "revision"
+        ]
+      },
+      "effects": "selection",
+      "requires_revision": true,
+      "undo": "not_applicable",
+      "cancellation": "before_dispatch",
+      "native": "Editor::scrubTo",
+      "path_parameters": [],
+      "coverage_entries": [],
+      "platform_qualification": {
+        "macos": "unqualified",
+        "windows": "unqualified",
+        "linux": "unqualified"
+      },
+      "preconditions": [
+        "authenticated_session",
+        "current_document_id",
+        "expected_revision",
+        "editor_idle"
+      ],
+      "failures": [
+        "unauthorized",
+        "protocol_mismatch",
+        "invalid_arguments",
+        "unsupported_capability",
+        "transport_failure",
+        "invalid_document",
+        "stale_revision",
+        "busy"
+      ]
+    },
+    {
+      "id": "timeline.add_key",
+      "input": {
+        "type": "object",
+        "properties": {
+          "frame": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000000
+          }
+        },
+        "required": [
+          "frame"
+        ],
+        "additionalProperties": false
+      },
+      "output": {
+        "type": "object",
+        "properties": {
+          "session_id": {
+            "type": "string"
+          },
+          "document_id": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "session_id",
+          "document_id",
+          "revision"
+        ]
+      },
+      "effects": "document",
+      "requires_revision": true,
+      "undo": "native_history",
+      "cancellation": "before_dispatch",
+      "native": "Editor::addKeyFrame",
+      "path_parameters": [],
+      "coverage_entries": [],
+      "platform_qualification": {
+        "macos": "unqualified",
+        "windows": "unqualified",
+        "linux": "unqualified"
+      },
+      "preconditions": [
+        "authenticated_session",
+        "current_document_id",
+        "expected_revision",
+        "editor_idle"
+      ],
+      "failures": [
+        "unauthorized",
+        "protocol_mismatch",
+        "invalid_arguments",
+        "unsupported_capability",
+        "transport_failure",
+        "invalid_document",
+        "stale_revision",
+        "busy"
+      ]
+    },
+    {
+      "id": "project.fps",
+      "input": {
+        "type": "object",
+        "properties": {
+          "fps": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 120
+          }
+        },
+        "required": [
+          "fps"
+        ],
+        "additionalProperties": false
+      },
+      "output": {
+        "type": "object",
+        "properties": {
+          "session_id": {
+            "type": "string"
+          },
+          "document_id": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "session_id",
+          "document_id",
+          "revision"
+        ]
+      },
+      "effects": "document",
+      "requires_revision": true,
+      "undo": "not_yet_supported",
+      "cancellation": "before_dispatch",
+      "native": "Editor::setFps",
+      "path_parameters": [],
+      "coverage_entries": [],
+      "platform_qualification": {
+        "macos": "unqualified",
+        "windows": "unqualified",
+        "linux": "unqualified"
+      },
+      "preconditions": [
+        "authenticated_session",
+        "current_document_id",
+        "expected_revision",
+        "editor_idle"
+      ],
+      "failures": [
+        "unauthorized",
+        "protocol_mismatch",
+        "invalid_arguments",
+        "unsupported_capability",
+        "transport_failure",
+        "invalid_document",
+        "stale_revision",
+        "busy"
+      ]
+    },
+    {
+      "id": "tool.select",
+      "input": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 11
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "additionalProperties": false
+      },
+      "output": {
+        "type": "object",
+        "properties": {
+          "session_id": {
+            "type": "string"
+          },
+          "document_id": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "session_id",
+          "document_id",
+          "revision"
+        ]
+      },
+      "effects": "view",
+      "requires_revision": true,
+      "undo": "not_applicable",
+      "cancellation": "before_dispatch",
+      "native": "ToolManager::setCurrentTool",
+      "path_parameters": [],
+      "coverage_entries": [],
+      "platform_qualification": {
+        "macos": "unqualified",
+        "windows": "unqualified",
+        "linux": "unqualified"
+      },
+      "preconditions": [
+        "authenticated_session",
+        "current_document_id",
+        "expected_revision",
+        "editor_idle"
+      ],
+      "failures": [
+        "unauthorized",
+        "protocol_mismatch",
+        "invalid_arguments",
+        "unsupported_capability",
+        "transport_failure",
+        "invalid_document",
+        "stale_revision",
+        "busy"
+      ]
+    },
+    {
+      "id": "color.set",
+      "input": {
+        "type": "object",
+        "properties": {
+          "color": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          }
+        },
+        "required": [
+          "color"
+        ],
+        "additionalProperties": false
+      },
+      "output": {
+        "type": "object",
+        "properties": {
+          "session_id": {
+            "type": "string"
+          },
+          "document_id": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "session_id",
+          "document_id",
+          "revision"
+        ]
+      },
+      "effects": "view",
+      "requires_revision": true,
+      "undo": "not_applicable",
+      "cancellation": "before_dispatch",
+      "native": "ColorManager::setFrontColor",
+      "path_parameters": [],
+      "coverage_entries": [],
+      "platform_qualification": {
+        "macos": "unqualified",
+        "windows": "unqualified",
+        "linux": "unqualified"
+      },
+      "preconditions": [
+        "authenticated_session",
+        "current_document_id",
+        "expected_revision",
+        "editor_idle"
+      ],
+      "failures": [
+        "unauthorized",
+        "protocol_mismatch",
+        "invalid_arguments",
+        "unsupported_capability",
+        "transport_failure",
+        "invalid_document",
+        "stale_revision",
+        "busy"
+      ]
+    },
+    {
+      "id": "canvas.stroke",
+      "input": {
+        "type": "object",
+        "properties": {
+          "points": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "x": {
+                  "type": "number",
+                  "minimum": -100000,
+                  "maximum": 100000
+                },
+                "y": {
+                  "type": "number",
+                  "minimum": -100000,
+                  "maximum": 100000
+                }
+              },
+              "required": [
+                "x",
+                "y"
+              ],
+              "additionalProperties": false
+            },
+            "minItems": 2,
+            "maxItems": 4096
+          }
+        },
+        "required": [
+          "points"
+        ],
+        "additionalProperties": false
+      },
+      "output": {
+        "type": "object",
+        "properties": {
+          "session_id": {
+            "type": "string"
+          },
+          "document_id": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "session_id",
+          "document_id",
+          "revision"
+        ]
+      },
+      "effects": "document",
+      "requires_revision": true,
+      "undo": "native_history",
+      "cancellation": "before_dispatch",
+      "native": "ScribbleArea::pointerPressEvent/pointerMoveEvent/pointerReleaseEvent",
+      "path_parameters": [],
+      "coverage_entries": [],
+      "platform_qualification": {
+        "macos": "unqualified",
+        "windows": "unqualified",
+        "linux": "unqualified"
+      },
+      "preconditions": [
+        "authenticated_session",
+        "current_document_id",
+        "expected_revision",
+        "editor_idle"
+      ],
+      "failures": [
+        "unauthorized",
+        "protocol_mismatch",
+        "invalid_arguments",
+        "unsupported_capability",
+        "transport_failure",
+        "invalid_document",
+        "stale_revision",
+        "busy"
+      ]
+    },
+    {
+      "id": "history.undo",
+      "input": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "output": {
+        "type": "object",
+        "properties": {
+          "session_id": {
+            "type": "string"
+          },
+          "document_id": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "session_id",
+          "document_id",
+          "revision"
+        ]
+      },
+      "effects": "document",
+      "requires_revision": true,
+      "undo": "native_history",
+      "cancellation": "before_dispatch",
+      "native": "UndoRedoManager::createUndoAction",
+      "path_parameters": [],
+      "coverage_entries": [],
+      "platform_qualification": {
+        "macos": "unqualified",
+        "windows": "unqualified",
+        "linux": "unqualified"
+      },
+      "preconditions": [
+        "authenticated_session",
+        "current_document_id",
+        "expected_revision",
+        "editor_idle"
+      ],
+      "failures": [
+        "unauthorized",
+        "protocol_mismatch",
+        "invalid_arguments",
+        "unsupported_capability",
+        "transport_failure",
+        "invalid_document",
+        "stale_revision",
+        "busy"
+      ]
+    },
+    {
+      "id": "history.redo",
+      "input": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "output": {
+        "type": "object",
+        "properties": {
+          "session_id": {
+            "type": "string"
+          },
+          "document_id": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "session_id",
+          "document_id",
+          "revision"
+        ]
+      },
+      "effects": "document",
+      "requires_revision": true,
+      "undo": "native_history",
+      "cancellation": "before_dispatch",
+      "native": "UndoRedoManager::createRedoAction",
+      "path_parameters": [],
+      "coverage_entries": [],
+      "platform_qualification": {
+        "macos": "unqualified",
+        "windows": "unqualified",
+        "linux": "unqualified"
+      },
+      "preconditions": [
+        "authenticated_session",
+        "current_document_id",
+        "expected_revision",
+        "editor_idle"
+      ],
+      "failures": [
+        "unauthorized",
+        "protocol_mismatch",
+        "invalid_arguments",
+        "unsupported_capability",
+        "transport_failure",
+        "invalid_document",
+        "stale_revision",
+        "busy"
+      ]
+    },
+    {
+      "id": "view.set",
+      "input": {
+        "type": "object",
+        "properties": {
+          "scale": {
+            "type": "number",
+            "minimum": 0.01,
+            "maximum": 100
+          },
+          "rotation": {
+            "type": "number",
+            "minimum": -360,
+            "maximum": 360
+          }
+        },
+        "required": [
+          "scale",
+          "rotation"
+        ],
+        "additionalProperties": false
+      },
+      "output": {
+        "type": "object",
+        "properties": {
+          "session_id": {
+            "type": "string"
+          },
+          "document_id": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "session_id",
+          "document_id",
+          "revision"
+        ]
+      },
+      "effects": "view",
+      "requires_revision": true,
+      "undo": "not_applicable",
+      "cancellation": "before_dispatch",
+      "native": "ViewManager::scale/rotate",
+      "path_parameters": [],
+      "coverage_entries": [],
+      "platform_qualification": {
+        "macos": "unqualified",
+        "windows": "unqualified",
+        "linux": "unqualified"
+      },
+      "preconditions": [
+        "authenticated_session",
+        "current_document_id",
+        "expected_revision",
+        "editor_idle"
+      ],
+      "failures": [
+        "unauthorized",
+        "protocol_mismatch",
+        "invalid_arguments",
+        "unsupported_capability",
+        "transport_failure",
+        "invalid_document",
+        "stale_revision",
+        "busy"
+      ]
+    },
+    {
+      "id": "document.snapshot",
+      "input": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "overwrite": {
+            "type": "boolean"
+          },
+          "fps": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 120
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "additionalProperties": false
+      },
+      "output": {
+        "type": "object",
+        "properties": {
+          "session_id": {
+            "type": "string"
+          },
+          "document_id": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "session_id",
+          "document_id",
+          "revision"
+        ]
+      },
+      "effects": "file",
+      "requires_revision": true,
+      "undo": "not_applicable",
+      "cancellation": "before_dispatch",
+      "native": "Editor::snapshot; Object::cloneForSnapshot; FileManager::save",
+      "path_parameters": [
+        "path"
+      ],
+      "coverage_entries": [],
+      "platform_qualification": {
+        "macos": "unqualified",
+        "windows": "unqualified",
+        "linux": "unqualified"
+      },
+      "preconditions": [
+        "authenticated_session",
+        "current_document_id",
+        "expected_revision",
+        "editor_idle"
+      ],
+      "failures": [
+        "unauthorized",
+        "protocol_mismatch",
+        "invalid_arguments",
+        "unsupported_capability",
+        "transport_failure",
+        "invalid_document",
+        "stale_revision",
+        "busy"
+      ]
+    }
+  ]
+}

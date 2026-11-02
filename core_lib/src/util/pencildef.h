@@ -224,7 +224,11 @@ const static int MaxFramesBound = 9999;
 #define IMPORT_REPOSITION_TYPE      "ImportRepositionType"
 
 // Settings Group/Key Name
+#ifdef STANLEE_AUTOMATION
+#define PENCIL2D "Pencil2D-Stanlee"
+#else
 #define PENCIL2D "Pencil"
+#endif
 #define SHORTCUTS_GROUP             "Shortcuts"
 #define SETTING_AUTO_SAVE           "AutoSave"
 #define SETTING_AUTO_SAVE_NUMBER    "AutosaveNumber"

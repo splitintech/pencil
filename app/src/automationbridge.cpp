@@ -1,0 +1,491 @@
+// SPDX-License-Identifier: GPL-2.0-only
+// Copyright (C) 2026 SplitIn contributors
+#include "automationbridge.h"
+#include "mainwindow2.h"
+#include "editor.h"
+#include "object.h"
+#include "filemanager.h"
+#include "layermanager.h"
+#include "layercamera.h"
+#include "keyframe.h"
+#include "playbackmanager.h"
+#include "undoredomanager.h"
+#include "toolmanager.h"
+#include "viewmanager.h"
+#include "colormanager.h"
+#include "scribblearea.h"
+#include "pointerevent.h"
+#include <QApplication>
+#include <QAction>
+#include <QBuffer>
+#include <QDir>
+#include <QFileInfo>
+#include <QJsonDocument>
+#include <QLabel>
+#include <QLocalServer>
+#include <QLocalSocket>
+#include <QRandomGenerator>
+#include <QPushButton>
+#include <QSaveFile>
+#include <QStatusBar>
+#include <QTimer>
+#include <QUuid>
+#include <QtEndian>
+#include <cmath>
+#include <stdexcept>
+#ifdef Q_OS_UNIX
+#include <sys/stat.h>
+#include <unistd.h>
+#endif
+
+namespace {
+constexpr quint32 maxMessage = 4 * 1024 * 1024;
+struct Failure : std::runtime_error
+{
+    QString code;
+    Failure(const QString& c, const QString& message) : std::runtime_error(message.toStdString()), code(c) {}
+};
+void require(bool condition, const QString& code, const QString& message)
+{
+    if (!condition) { throw Failure(code, message); }
+}
+int integer(const QJsonObject& args, const QString& key, int min, int max)
+{
+    auto value = args.value(key);
+    double number = value.toDouble(NAN);
+    require(value.isDouble() && std::isfinite(number) && std::floor(number) == number && number >= min && number <= max,
+            "invalid_arguments", "Invalid integer: " + key);
+    return static_cast<int>(number);
+}
+QString text(const QJsonObject& args, const QString& key)
+{
+    require(args.value(key).isString(), "invalid_arguments", "Missing string: " + key);
+    QString value = args.value(key).toString();
+    require(!value.isEmpty() && value.size() <= 4096 && !value.contains(QChar(0)), "invalid_arguments", "Invalid string: " + key);
+    return value;
+}
+bool privateDirectory(const QString& path)
+{
+    QFileInfo info(path);
+    if (!info.isDir() || info.isSymLink()) { return false; }
+#ifdef Q_OS_UNIX
+    struct stat status;
+    QByteArray native = QFile::encodeName(path);
+    return ::lstat(native.constData(), &status) == 0 && status.st_uid == ::getuid() && (status.st_mode & 0077) == 0;
+#else
+    // Windows discovery ACL qualification is required before enabling the bridge.
+    return false;
+#endif
+}
+QJsonArray operations()
+{
+    QFile file(":/automation/operations.json");
+    if (!file.open(QIODevice::ReadOnly)) { return {}; }
+    return QJsonDocument::fromJson(file.readAll()).object().value("operations").toArray();
+}
+void validate(const QJsonObject& args, const QJsonObject& schema)
+{
+    auto properties = schema.value("properties").toObject();
+    for (const auto& key : schema.value("required").toArray())
+    {
+        require(args.contains(key.toString()), "invalid_arguments", "Missing required argument: " + key.toString());
+    }
+    for (auto it = args.begin(); it != args.end(); ++it)
+    {
+        require(properties.contains(it.key()), "invalid_arguments", "Unknown argument: " + it.key());
+        auto property = properties.value(it.key()).toObject();
+        auto value = it.value();
+        QString type = property.value("type").toString();
+        if (type == "boolean") { require(value.isBool(), "invalid_arguments", "Expected boolean: " + it.key()); }
+        if (type == "string") { text(args, it.key()); }
+        if (type == "integer") { integer(args, it.key(), property.value("minimum").toInt(), property.value("maximum").toInt()); }
+        if (type == "number")
+        {
+            double number = value.toDouble(NAN);
+            require(std::isfinite(number) && number >= property.value("minimum").toDouble() && number <= property.value("maximum").toDouble(),
+                    "invalid_arguments", "Invalid number: " + it.key());
+        }
+        if (type == "array") { require(value.isArray(), "invalid_arguments", "Expected array: " + it.key()); }
+        if (property.contains("enum")) { require(property.value("enum").toArray().contains(value), "invalid_arguments", "Invalid enum: " + it.key()); }
+    }
+}
+}
+
+AutomationBridge::AutomationBridge(MainWindow2* window) : QObject(window), mWindow(window), mEditor(window->mEditor)
+{
+    mServer = new QLocalServer(this);
+    connect(mServer, &QLocalServer::newConnection, this, &AutomationBridge::acceptConnection);
+    connect(mEditor, &Editor::frameModified, this, [this] { changed("frame"); });
+    connect(mEditor, &Editor::framesModified, this, [this] { changed("frames"); });
+    connect(mEditor, &Editor::objectLoaded, this, [this] {
+        mDocumentId = QUuid::createUuid().toString(QUuid::WithoutBraces);
+        changed("document");
+    });
+    connect(mEditor, &Editor::fpsChanged, this, [this] { changed("fps"); });
+    connect(mEditor, &Editor::scrubbed, this, [this] { changed("frame_selection"); });
+    connect(mEditor, &Editor::selectedFramesChanged, this, [this] { changed("selection"); });
+    connect(mEditor->layers(), &LayerManager::currentLayerChanged, this, [this] { changed("layer_selection"); });
+    connect(mEditor->layers(), &LayerManager::layerCountChanged, this, [this] { changed("layers"); });
+    connect(mEditor->tools(), &ToolManager::toolChanged, this, [this] { changed("tool"); });
+    connect(mEditor->color(), &ColorManager::colorChanged, this, [this] { changed("color"); });
+    connect(mEditor->undoRedo(), &UndoRedoManager::didUpdateUndoStack, this, [this] { changed("history"); });
+    connect(mEditor->view(), &ViewManager::viewChanged, this, [this] { changed("view"); });
+    connect(mEditor->getScribbleArea(), &ScribbleArea::selectionUpdated, this, [this] { changed("selection"); });
+    connect(mEditor->playback(), &PlaybackManager::playStateChanged, this, [this] { changed("playback"); });
+}
+
+AutomationBridge::~AutomationBridge() { stop(); }
+
+bool AutomationBridge::start(const QString& directory, const QStringList& workspaces)
+{
+    if (!QFileInfo(directory).isAbsolute() || workspaces.isEmpty()) { return false; }
+    if (!QFileInfo::exists(directory))
+    {
+        if (!QDir().mkpath(directory) || !QFile::setPermissions(directory, QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner)) { return false; }
+    }
+    if (!privateDirectory(directory)) { return false; }
+    mDirectory = QFileInfo(directory).canonicalFilePath();
+    for (const QString& root : workspaces)
+    {
+        QFileInfo info(root);
+        if (!info.isAbsolute() || !info.isDir()) { return false; }
+        mWorkspaces.append(info.canonicalFilePath());
+    }
+    mSessionId = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    mDocumentId = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    QByteArray secret;
+    for (int i = 0; i < 8; ++i) { quint32 word = QRandomGenerator::system()->generate(); secret.append(reinterpret_cast<const char*>(&word), sizeof word); }
+    mToken = QString::fromLatin1(secret.toHex());
+    mServer->setSocketOptions(QLocalServer::UserAccessOption);
+    QString endpoint = QDir(mDirectory).filePath(mSessionId + ".sock");
+    if (!mServer->listen(endpoint)) { return false; }
+    mDiscoveryFile = QDir(mDirectory).filePath(mSessionId + ".json");
+    QSaveFile file(mDiscoveryFile);
+    file.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner);
+    if (!file.open(QIODevice::WriteOnly)) { stop(); return false; }
+    file.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner);
+    QJsonObject record { {"protocol_version", 1}, {"session_id", mSessionId}, {"endpoint", endpoint},
+        {"token", mToken}, {"pid", static_cast<double>(QCoreApplication::applicationPid())} };
+    if (file.write(QJsonDocument(record).toJson(QJsonDocument::Compact)) < 0 || !file.commit()) { stop(); return false; }
+    mStatus = new QLabel(tr("Automation enabled (local workspace access)"), mWindow);
+    mWindow->statusBar()->addPermanentWidget(mStatus);
+    auto revoke = new QPushButton(tr("Disconnect automation"), mWindow);
+    mWindow->statusBar()->addPermanentWidget(revoke);
+    connect(revoke, &QPushButton::clicked, this, &AutomationBridge::stop);
+    changed("session_started", false);
+    return true;
+}
+
+void AutomationBridge::stop()
+{
+    mServer->close();
+    for (auto socket : findChildren<QLocalSocket*>()) { socket->abort(); }
+    if (!mDiscoveryFile.isEmpty()) { QFile::remove(mDiscoveryFile); mDiscoveryFile.clear(); }
+    mToken.clear();
+    if (mStatus) { mStatus->setText(tr("Automation disconnected")); }
+}
+
+void AutomationBridge::acceptConnection()
+{
+    while (mServer->hasPendingConnections())
+    {
+        auto socket = mServer->nextPendingConnection();
+        socket->setParent(this);
+        socket->setReadBufferSize(maxMessage + 4);
+        auto deadline = new QTimer(socket);
+        deadline->setSingleShot(true);
+        connect(deadline, &QTimer::timeout, socket, &QLocalSocket::abort);
+        deadline->start(15000);
+        connect(socket, &QLocalSocket::readyRead, this, [this, socket] { receive(socket); });
+        connect(socket, &QLocalSocket::disconnected, socket, &QObject::deleteLater);
+    }
+}
+
+void AutomationBridge::receive(QLocalSocket* socket)
+{
+    if (socket->property("handled").toBool()) { return; }
+    if (socket->bytesAvailable() < 4) { return; }
+    QByteArray header = socket->peek(4);
+    quint32 size = qFromBigEndian<quint32>(reinterpret_cast<const uchar*>(header.constData()));
+    if (size == 0 || size > maxMessage) { socket->abort(); return; }
+    if (socket->bytesAvailable() < size + 4) { return; }
+    socket->setProperty("handled", true);
+    socket->read(4);
+    QJsonParseError error;
+    auto message = QJsonDocument::fromJson(socket->read(size), &error);
+    if (error.error != QJsonParseError::NoError || !message.isObject()) { socket->abort(); return; }
+    QByteArray output = QJsonDocument(dispatch(message.object())).toJson(QJsonDocument::Compact);
+    if (static_cast<quint32>(output.size()) > maxMessage) { socket->abort(); return; }
+    quint32 length = qToBigEndian(static_cast<quint32>(output.size()));
+    socket->write(reinterpret_cast<const char*>(&length), 4);
+    socket->write(output);
+    socket->disconnectFromServer();
+}
+
+QJsonObject AutomationBridge::dispatch(const QJsonObject& request)
+{
+    QJsonObject response { {"id", request.value("id")} };
+    try
+    {
+        require(request.value("protocol_version").toInt() == 1, "protocol_mismatch", "Expected bridge protocol 1");
+        require(!mToken.isEmpty() && request.value("token").toString() == mToken && request.value("session_id").toString() == mSessionId,
+                "unauthorized", "Invalid session credentials");
+        QString op = request.value("operation").toString();
+        QJsonObject contract;
+        for (const auto& item : operations()) { if (item.toObject().value("id").toString() == op) { contract = item.toObject(); break; } }
+        require(!contract.isEmpty(), "unsupported_capability", "Operation is not implemented in this build");
+        bool writes = contract.value("requires_revision").toBool();
+        require(!mExecuting, "busy", "Another native operation is active");
+        if (writes)
+        {
+            require(request.value("document_id").toString() == mDocumentId, "invalid_document", "Document was replaced or reopened");
+            require(request.value("expected_revision").isDouble() && request.value("expected_revision").toDouble() == mRevision,
+                    "stale_revision", "Document changed; inspect and retry with the current revision");
+            require(!QApplication::activeModalWidget() && !mEditor->getScribbleArea()->isPointerInUse()
+                    && !mEditor->tools()->currentTool()->isActive() && !mEditor->playback()->isPlaying(),
+                    "busy", "A human tool, playback or modal operation is active");
+        }
+        require(request.value("arguments").isObject(), "invalid_arguments", "Arguments must be an object");
+        validate(request.value("arguments").toObject(), contract.value("input").toObject());
+        mExecuting = true;
+        QJsonObject result = execute(op, request.value("arguments").toObject());
+        if (writes) { changed(op, op != "document.snapshot"); }
+        result.insert("session_id", mSessionId);
+        result.insert("document_id", mDocumentId);
+        result.insert("revision", static_cast<double>(mRevision));
+        response.insert("result", result);
+    }
+    catch (const Failure& error)
+    {
+        response.insert("error", QJsonObject {{"code", error.code}, {"message", QString::fromUtf8(error.what())},
+            {"details", QJsonObject {{"revision", static_cast<double>(mRevision)}, {"document_id", mDocumentId}}}});
+    }
+    catch (const std::exception&)
+    {
+        response.insert("error", QJsonObject {{"code", "native_failure"}, {"message", "Native operation failed"}});
+    }
+    mExecuting = false;
+    return response;
+}
+
+void AutomationBridge::changed(const QString& kind, bool documentChanged)
+{
+    if (documentChanged) { ++mRevision; }
+    ++mEventSequence;
+    mEvents.append(QJsonObject {{"sequence", static_cast<double>(mEventSequence)}, {"kind", kind},
+        {"revision", static_cast<double>(mRevision)}, {"document_id", mDocumentId}});
+    if (mEvents.size() > 1024) { mEvents.removeFirst(); }
+}
+
+QString AutomationBridge::grantedPath(const QString& path, bool mustExist) const
+{
+    QFileInfo info(path);
+    require(info.isAbsolute() && !path.contains(QChar(0)), "invalid_path", "Expected an absolute path");
+    QString resolved = info.canonicalFilePath();
+    require(!info.isSymLink() || !resolved.isEmpty(), "invalid_path", "Dangling symbolic links are not output paths");
+    if (resolved.isEmpty() && !mustExist)
+    {
+        QString parent = QFileInfo(info.absolutePath()).canonicalFilePath();
+        require(!parent.isEmpty(), "invalid_path", "Parent directory must exist");
+        resolved = QDir(parent).filePath(info.fileName());
+    }
+    require(!resolved.isEmpty(), "missing_asset", "Path does not exist");
+    for (const QString& root : mWorkspaces)
+    {
+        if (resolved == root || resolved.startsWith(root + QDir::separator())) { return resolved; }
+    }
+    throw Failure("workspace_denied", "Path is outside granted workspaces");
+}
+
+QJsonObject AutomationBridge::state() const
+{
+    auto object = mEditor->object();
+    QJsonArray layers;
+    for (int i = 0; i < object->getLayerCount(); ++i)
+    {
+        auto layer = object->getLayer(i);
+        QJsonArray frames;
+        layer->foreachKeyFrame([&frames](KeyFrame* key) { frames.append(QJsonObject {{"frame", key->pos()}, {"length", key->length()}}); });
+        layers.append(QJsonObject {{"layer_id", mDocumentId + ":" + QString::number(layer->id())}, {"native_id", layer->id()},
+            {"index", i}, {"name", layer->name()}, {"type", static_cast<int>(layer->type())}, {"visible", layer->visible()}, {"frames", frames}});
+    }
+    return {{"path", object->filePath()}, {"dirty", object->isModified() || mEditor->undoRedo()->hasUnsavedChanges()},
+        {"frame", mEditor->currentFrame()}, {"layer_index", mEditor->currentLayerIndex()}, {"fps", mEditor->fps()},
+        {"layers", layers}, {"tool", static_cast<int>(mEditor->tools()->currentTool()->type())},
+        {"event_sequence", static_cast<double>(mEventSequence)}};
+}
+
+QJsonObject AutomationBridge::execute(const QString& op, const QJsonObject& args)
+{
+    if (op == "session.capabilities")
+    {
+        QJsonArray operations;
+        for (const auto& item : ::operations()) { operations.append(item.toObject().value("id")); }
+        return {{"protocol_version", 1}, {"application_version", QCoreApplication::applicationVersion()},
+            {"operations", operations}, {"workspaces", QJsonArray::fromStringList(mWorkspaces)}, {"qualified_alpha", false}};
+    }
+    if (op == "document.inspect") { return state(); }
+    if (op == "events.poll")
+    {
+        int after = args.contains("after") ? integer(args, "after", 0, 2147483647) : 0;
+        QJsonArray result;
+        for (const auto& event : mEvents) { if (event.toObject().value("sequence").toDouble() > after) { result.append(event); } }
+        return {{"events", result}, {"latest", static_cast<double>(mEventSequence)},
+            {"gap", !mEvents.isEmpty() && after < mEvents.first().toObject().value("sequence").toDouble() - 1}};
+    }
+    if (op == "frame.preview")
+    {
+        auto layer = dynamic_cast<LayerCamera*>(mEditor->layers()->getLastCameraLayer());
+        require(layer != nullptr, "invalid_selection", "No camera layer available");
+        int frame = args.contains("frame") ? integer(args, "frame", 1, 1000000) : mEditor->currentFrame();
+        QSize size = layer->getViewSize();
+        require(size.width() > 0 && size.height() > 0 && size.width() <= 4096 && size.height() <= 4096,
+                "invalid_context", "Preview dimensions exceed bounds");
+        QImage image(size, QImage::Format_ARGB32_Premultiplied);
+        image.fill(Qt::transparent);
+        QPainter painter(&image);
+        painter.translate(size.width() / 2.0, size.height() / 2.0);
+        painter.setTransform(layer->getViewAtFrame(frame), true);
+        mEditor->object()->paintImage(painter, frame, false, true);
+        painter.end();
+        QByteArray bytes;
+        QBuffer buffer(&bytes);
+        require(image.save(&buffer, "PNG"), "native_failure", "PNG preview encoding failed");
+        require(bytes.size() < 2 * 1024 * 1024, "message_too_large", "Preview exceeds IPC response limit");
+        return {{"mime_type", "image/png"}, {"data", QString::fromLatin1(bytes.toBase64())},
+            {"width", size.width()}, {"height", size.height()}, {"frame", frame}};
+    }
+    if (op == "document.new" || op == "document.open")
+    {
+        require(!(mEditor->object()->isModified() || mEditor->undoRedo()->hasUnsavedChanges()) || args.value("discard").toBool(false),
+                "discard_required", "Unsaved document requires explicit discard");
+        Object* object = nullptr;
+        if (op == "document.new")
+        {
+            object = new Object;
+            object->init();
+            object->addNewCameraLayer(); object->addNewBitmapLayer();
+            object->data()->setCurrentLayer(1);
+        }
+        else
+        {
+            QString path = grantedPath(text(args, "path"), true);
+            FileManager manager;
+            object = manager.load(path);
+            require(object != nullptr && manager.error().ok(), "invalid_document", "Native document load failed");
+        }
+        mEditor->setObject(object);
+        mWindow->setWindowTitle(tr("Pencil2D–Stanlee"));
+        return state();
+    }
+    if (op == "document.snapshot")
+    {
+        QString path = grantedPath(text(args, "path"), false);
+        require(QFileInfo(path).suffix().toLower() == "pclx", "unsupported_capability", "Snapshots require native pclx format");
+        require(path != mEditor->object()->filePath(), "invalid_path", "Snapshot must not overwrite the active document");
+        require(!QFileInfo::exists(path) || args.value("overwrite").toBool(false), "overwrite_required", "Explicit overwrite required");
+        auto snapshot = mEditor->snapshot();
+        require(snapshot != nullptr, "native_failure", "Native snapshot cloning failed");
+        if (args.contains("fps")) { snapshot->data()->setFrameRate(integer(args, "fps", 1, 120)); }
+        FileManager manager;
+        require(manager.save(snapshot.get(), path).ok(), "native_failure", "Snapshot save failed");
+        return {{"path", path}, {"source_revision", static_cast<double>(mRevision)}};
+    }
+    if (op == "document.save")
+    {
+        QString path = grantedPath(text(args, "path"), false);
+        QString suffix = QFileInfo(path).suffix().toLower();
+        require(suffix == "pclx", "unsupported_capability", "Only native pclx save is currently qualified");
+        require(!QFileInfo::exists(path) || args.value("overwrite").toBool(false), "overwrite_required", "Explicit overwrite required");
+        mEditor->prepareSave(false);
+        FileManager manager;
+        Status status = manager.save(mEditor->object(), path);
+        require(status.ok(), "native_failure", "Native save failed");
+        mEditor->undoRedo()->save(mEditor->object());
+        mEditor->object()->setFilePath(path);
+        mEditor->object()->setModified(false);
+        return {{"path", path}};
+    }
+    if (op == "layer.create")
+    {
+        QString type = text(args, "type");
+        Layer::LAYER_TYPE nativeType = type == "bitmap" ? Layer::BITMAP : type == "vector" ? Layer::VECTOR :
+            type == "sound" ? Layer::SOUND : type == "camera" ? Layer::CAMERA : Layer::UNDEFINED;
+        require(nativeType != Layer::UNDEFINED, "invalid_arguments", "Unknown layer type");
+        mEditor->layers()->createLayer(nativeType, text(args, "name"));
+        mEditor->object()->modification();
+    }
+    else if (op == "layer.select") { mEditor->layers()->setCurrentLayer(integer(args, "index", 0, mEditor->layers()->count()-1)); }
+    else if (op == "timeline.scrub") { mEditor->scrubTo(integer(args, "frame", 1, 1000000)); }
+    else if (op == "timeline.add_key")
+    {
+        int frame = integer(args, "frame", 1, 1000000);
+        auto layer = mEditor->layers()->currentLayer();
+        require(layer->visible() && !layer->keyExists(frame), "invalid_context", "Layer must be visible and frame empty");
+        require(mEditor->addKeyFrame(mEditor->currentLayerIndex(), frame) != nullptr, "native_failure", "Keyframe creation failed");
+    }
+    else if (op == "project.fps")
+    {
+        int fps = integer(args, "fps", 1, 120);
+        mEditor->playback()->setFps(fps); mEditor->setFps(fps); mEditor->object()->modification();
+    }
+    else if (op == "tool.select") { mEditor->tools()->setCurrentTool(static_cast<ToolType>(integer(args, "type", 0, TOOL_TYPE_COUNT-1))); }
+    else if (op == "color.set")
+    {
+        QColor color(text(args, "color"));
+        require(color.isValid(), "invalid_arguments", "Invalid color");
+        mEditor->color()->setFrontColor(color);
+    }
+    else if (op == "canvas.stroke")
+    {
+        auto canvas = mEditor->getScribbleArea();
+        auto layer = mEditor->layers()->currentLayer();
+        auto tool = mEditor->tools()->currentTool();
+        require(layer->visible() && layer->isPaintable() && tool->isDrawingTool() && tool->type() != POLYLINE,
+                "invalid_context", "Stroke requires a visible paintable layer and a supported drawing tool");
+        auto points = args.value("points").toArray();
+        require(points.size() >= 2 && points.size() <= 4096, "invalid_arguments", "Provide 2–4096 canvas points");
+        for (const auto& value : points)
+        {
+            auto point = value.toObject();
+            for (const QString& key : {QString("x"), QString("y")})
+            {
+                double coordinate = point.value(key).toDouble(NAN);
+                require(std::isfinite(coordinate) && std::abs(coordinate) <= 100000, "invalid_arguments", "Invalid stroke coordinate");
+            }
+            require(!point.contains("pressure"), "unsupported_capability", "Pressure samples are not implemented yet");
+        }
+        for (int i = 0; i < points.size(); ++i)
+        {
+            auto value = points.at(i).toObject();
+            QPointF canvasPoint(value.value("x").toDouble(), value.value("y").toDouble());
+            QPointF screenPoint = mEditor->view()->mapCanvasToScreen(canvasPoint);
+            auto type = i == 0 ? QEvent::MouseButtonPress : i == points.size()-1 ? QEvent::MouseButtonRelease : QEvent::MouseMove;
+            QMouseEvent mouse(type, screenPoint, screenPoint, i == 0 || i == points.size()-1 ? Qt::LeftButton : Qt::NoButton,
+                i == points.size()-1 ? Qt::NoButton : Qt::LeftButton, Qt::NoModifier);
+            PointerEvent event(&mouse, canvasPoint);
+            if (i == 0) { canvas->pointerPressEvent(&event); }
+            else if (i == points.size()-1) { canvas->pointerReleaseEvent(&event); }
+            else { canvas->pointerMoveEvent(&event); }
+        }
+    }
+    else if (op == "history.undo" || op == "history.redo")
+    {
+        auto action = op == "history.undo" ? mEditor->undoRedo()->createUndoAction(this, QIcon()) : mEditor->undoRedo()->createRedoAction(this, QIcon());
+        if (op == "history.undo") { mEditor->undoRedo()->updateUndoAction(action); }
+        else { mEditor->undoRedo()->updateRedoAction(action); }
+        require(action->isEnabled(), "invalid_context", "No native history action available");
+        action->trigger(); action->deleteLater();
+    }
+    else if (op == "view.set")
+    {
+        double scale = args.value("scale").toDouble(NAN);
+        double rotation = args.value("rotation").toDouble(NAN);
+        require(std::isfinite(scale) && scale >= 0.01 && scale <= 100 && std::isfinite(rotation) && std::abs(rotation) <= 360,
+                "invalid_arguments", "Invalid viewport scale or rotation");
+        mEditor->view()->scale(scale); mEditor->view()->rotate(rotation);
+    }
+    else { throw Failure("unsupported_capability", "Operation is not implemented"); }
+    mEditor->updateFrame();
+    return state();
+}

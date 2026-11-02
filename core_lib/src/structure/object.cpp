@@ -57,6 +57,48 @@ Object::~Object()
     deleteWorkingDir();
 }
 
+std::unique_ptr<Object> Object::cloneForSnapshot() const
+{
+    std::unique_ptr<Object> result(new Object);
+    result->createWorkingDir();
+    result->mPalette = mPalette;
+    result->mData = mData;
+    for (Layer* source : mLayers)
+    {
+        std::unique_ptr<Layer> target;
+        switch (source->type())
+        {
+        case Layer::BITMAP: target.reset(new LayerBitmap(source->id())); break;
+        case Layer::VECTOR: target.reset(new LayerVector(source->id())); break;
+        case Layer::CAMERA: target.reset(new LayerCamera(source->id())); break;
+        case Layer::SOUND: target.reset(new LayerSound(source->id())); break;
+        default: return nullptr;
+        }
+        QDomDocument document;
+        QDomElement metadata = source->createDomElement(document);
+        while (!metadata.firstChild().isNull()) { metadata.removeChild(metadata.firstChild()); }
+        target->loadDomElement(metadata, result->dataDir(), [] {});
+        bool valid = true;
+        source->foreachKeyFrame([&](KeyFrame* key) {
+            // Loading existing backing data is read-only. Never use bitmap
+            // clone(), which can create a temporary copy in the source folder.
+            key->loadFile();
+            KeyFrame* copied = source->type() == Layer::BITMAP
+                ? static_cast<KeyFrame*>(new BitmapImage(*static_cast<BitmapImage*>(key))) : key->clone();
+            if (!copied) { valid = false; return; }
+            if (source->type() == Layer::BITMAP || source->type() == Layer::VECTOR)
+            {
+                copied->setFileName(QString());
+                copied->modification();
+            }
+            target->addOrReplaceKeyFrame(key->pos(), copied);
+        });
+        if (!valid) { return nullptr; }
+        result->addLayer(target.release());
+    }
+    return result;
+}
+
 void Object::init()
 {
     createWorkingDir();
