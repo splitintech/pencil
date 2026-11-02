@@ -46,8 +46,9 @@ source path, dirty state, bitmap backing files, source bytes, preview and undo
 preservation. Recovery orchestration and comprehensive sound/vector fixtures
 remain pending.
 
-Current qualification is macOS arm64 only. Windows bridge activation fails
-closed while discovery ACL and named-pipe client qualification remain unfinished.
+Current qualification is macOS arm64 only. Windows uses a current-user-owned
+discovery DACL and QLocalServer user-access named pipes; runtime qualification
+is pending Windows CI. Invalid or uninspectable ACLs fail closed.
 Full editor coverage, pressure/modifier samples, atomic batches, robust document
 recovery, platform/client acceptance and signed release packaging remain pending.
 This integration is not a complete Stanlee alpha and is not ready for upstream

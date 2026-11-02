@@ -368,7 +368,13 @@ QString AutomationBridge::grantedPath(const QString& path, bool mustExist) const
     require(!resolved.isEmpty(), "missing_asset", "Path does not exist");
     for (const QString& root : mWorkspaces)
     {
-        if (resolved == root || resolved.startsWith(root + QDir::separator())) { return resolved; }
+#ifdef Q_OS_WIN
+        auto sensitivity = Qt::CaseInsensitive;
+#else
+        auto sensitivity = Qt::CaseSensitive;
+#endif
+        QString prefix = root.endsWith('/') ? root : root + '/';
+        if (resolved.compare(root, sensitivity) == 0 || resolved.startsWith(prefix, sensitivity)) { return resolved; }
     }
     throw Failure("workspace_denied", "Path is outside granted workspaces");
 }
