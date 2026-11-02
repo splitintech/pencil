@@ -16,6 +16,7 @@ equals(STANLEE_AUTOMATION, 1) {
     HEADERS += src/automationbridge.h
     RESOURCES += data/automation.qrc
     TARGET = pencil2d-stanlee
+    win32: LIBS += -ladvapi32
 }
 
 RESOURCES += data/app.qrc

@@ -37,6 +37,10 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #endif
+#ifdef Q_OS_WIN
+#include <qt_windows.h>
+#include <aclapi.h>
+#endif
 
 namespace {
 constexpr quint32 maxMessage = 4 * 1024 * 1024;
@@ -64,6 +68,69 @@ QString text(const QJsonObject& args, const QString& key)
     require(!value.isEmpty() && value.size() <= 4096 && !value.contains(QChar(0)), "invalid_arguments", "Invalid string: " + key);
     return value;
 }
+#ifdef Q_OS_WIN
+QByteArray currentWindowsUser()
+{
+    HANDLE token = nullptr;
+    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) { return {}; }
+    DWORD size = 0;
+    GetTokenInformation(token, TokenUser, nullptr, 0, &size);
+    QByteArray data(static_cast<int>(size), 0);
+    bool ok = size > 0 && GetTokenInformation(token, TokenUser, data.data(), size, &size);
+    CloseHandle(token);
+    return ok ? data : QByteArray();
+}
+bool protectWindowsDirectory(const QString& path)
+{
+    QByteArray user = currentWindowsUser();
+    if (user.isEmpty()) { return false; }
+    EXPLICIT_ACCESSW access = {};
+    access.grfAccessPermissions = FILE_ALL_ACCESS;
+    access.grfAccessMode = SET_ACCESS;
+    access.grfInheritance = SUB_CONTAINERS_AND_OBJECTS_INHERIT;
+    access.Trustee.TrusteeForm = TRUSTEE_IS_SID;
+    access.Trustee.TrusteeType = TRUSTEE_IS_USER;
+    access.Trustee.ptstrName = reinterpret_cast<LPWSTR>(reinterpret_cast<TOKEN_USER*>(user.data())->User.Sid);
+    PACL acl = nullptr;
+    if (SetEntriesInAclW(1, &access, nullptr, &acl) != ERROR_SUCCESS) { return false; }
+    QString nativePath = QDir::toNativeSeparators(path);
+    DWORD result = SetNamedSecurityInfoW(reinterpret_cast<LPWSTR>(nativePath.data()), SE_FILE_OBJECT,
+        OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+        reinterpret_cast<TOKEN_USER*>(user.data())->User.Sid, nullptr, acl, nullptr);
+    LocalFree(acl);
+    return result == ERROR_SUCCESS;
+}
+bool privateWindowsPath(const QString& path)
+{
+    QByteArray user = currentWindowsUser();
+    if (user.isEmpty()) { return false; }
+    QString nativePath = QDir::toNativeSeparators(path);
+    DWORD attributes = GetFileAttributesW(reinterpret_cast<LPCWSTR>(nativePath.utf16()));
+    if (attributes == INVALID_FILE_ATTRIBUTES || (attributes & FILE_ATTRIBUTE_REPARSE_POINT)) { return false; }
+    PSECURITY_DESCRIPTOR descriptor = nullptr;
+    PSID owner = nullptr;
+    PACL acl = nullptr;
+    DWORD result = GetNamedSecurityInfoW(reinterpret_cast<LPCWSTR>(nativePath.utf16()), SE_FILE_OBJECT,
+        OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION, &owner, nullptr, &acl, nullptr, &descriptor);
+    if (result != ERROR_SUCCESS) { return false; }
+    auto userSid = reinterpret_cast<TOKEN_USER*>(user.data())->User.Sid;
+    bool ok = owner && EqualSid(owner, userSid) && acl && acl->AceCount > 0;
+    for (DWORD i = 0; ok && i < acl->AceCount; ++i)
+    {
+        void* entry = nullptr;
+        if (!GetAce(acl, i, &entry)) { ok = false; break; }
+        auto header = static_cast<ACE_HEADER*>(entry);
+        if (header->AceType == ACCESS_DENIED_ACE_TYPE) { continue; }
+        if (header->AceType != ACCESS_ALLOWED_ACE_TYPE) { ok = false; break; }
+        auto sid = reinterpret_cast<PSID>(&static_cast<ACCESS_ALLOWED_ACE*>(entry)->SidStart);
+        // Administrators and SYSTEM can already override user DACLs; never
+        // accept grants to ordinary groups or other users.
+        ok = EqualSid(sid, userSid) || IsWellKnownSid(sid, WinLocalSystemSid) || IsWellKnownSid(sid, WinBuiltinAdministratorsSid);
+    }
+    LocalFree(descriptor);
+    return ok;
+}
+#endif
 bool privateDirectory(const QString& path)
 {
     QFileInfo info(path);
@@ -72,8 +139,9 @@ bool privateDirectory(const QString& path)
     struct stat status;
     QByteArray native = QFile::encodeName(path);
     return ::lstat(native.constData(), &status) == 0 && status.st_uid == ::getuid() && (status.st_mode & 0077) == 0;
+#elif defined(Q_OS_WIN)
+    return privateWindowsPath(path);
 #else
-    // Windows discovery ACL qualification is required before enabling the bridge.
     return false;
 #endif
 }
@@ -141,7 +209,12 @@ bool AutomationBridge::start(const QString& directory, const QStringList& worksp
     if (!QFileInfo(directory).isAbsolute() || workspaces.isEmpty()) { return false; }
     if (!QFileInfo::exists(directory))
     {
-        if (!QDir().mkpath(directory) || !QFile::setPermissions(directory, QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner)) { return false; }
+        if (!QDir().mkpath(directory)) { return false; }
+#ifdef Q_OS_WIN
+        if (!protectWindowsDirectory(directory)) { return false; }
+#else
+        if (!QFile::setPermissions(directory, QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner)) { return false; }
+#endif
     }
     if (!privateDirectory(directory)) { return false; }
     mDirectory = QFileInfo(directory).canonicalFilePath();
@@ -158,13 +231,16 @@ bool AutomationBridge::start(const QString& directory, const QStringList& worksp
     mToken = QString::fromLatin1(secret.toHex());
     mServer->setSocketOptions(QLocalServer::UserAccessOption);
     QString endpoint = QDir(mDirectory).filePath(mSessionId + ".sock");
+#ifdef Q_OS_WIN
+    endpoint = "stanlee-" + mSessionId;
+#endif
     if (!mServer->listen(endpoint)) { return false; }
     mDiscoveryFile = QDir(mDirectory).filePath(mSessionId + ".json");
     QSaveFile file(mDiscoveryFile);
     file.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner);
     if (!file.open(QIODevice::WriteOnly)) { stop(); return false; }
     file.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner);
-    QJsonObject record { {"protocol_version", 1}, {"session_id", mSessionId}, {"endpoint", endpoint},
+    QJsonObject record { {"protocol_version", 1}, {"session_id", mSessionId}, {"endpoint", mServer->fullServerName()},
         {"token", mToken}, {"pid", static_cast<double>(QCoreApplication::applicationPid())} };
     if (file.write(QJsonDocument(record).toJson(QJsonDocument::Compact)) < 0 || !file.commit()) { stop(); return false; }
     mStatus = new QLabel(tr("Automation enabled (local workspace access)"), mWindow);

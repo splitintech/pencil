@@ -65,6 +65,9 @@ include(tests/tests.cmake)
 if(STANLEE_AUTOMATION)
     target_sources(pencil2d PRIVATE app/src/automationbridge.cpp app/src/automationbridge.h app/data/automation.qrc)
     set_target_properties(pencil2d PROPERTIES OUTPUT_NAME pencil2d-stanlee)
+    if(WIN32)
+        target_link_libraries(pencil2d PRIVATE advapi32)
+    endif()
     if(APPLE)
         set_target_properties(pencil2d PROPERTIES
             MACOSX_BUNDLE_BUNDLE_NAME "Pencil2D-Stanlee"
