@@ -199,11 +199,8 @@ void Pencil2D::prepareGuiStartup(const QString& inputPath)
 #ifdef STANLEE_AUTOMATION
     if (qEnvironmentVariable("STANLEE_AUTOMATION") == "1")
     {
-        auto object = new Object;
-        object->init();
-        object->addNewCameraLayer(); object->addNewBitmapLayer();
-        object->data()->setCurrentLayer(1);
-        mainWindow->mEditor->setObject(object);
+        // MainWindow2 already constructs a fresh native camera/bitmap document.
+        // Do not replace it again while startup/show events are still pending.
         auto bridge = new AutomationBridge(mainWindow.get());
         QStringList workspaces = qEnvironmentVariable("STANLEE_WORKSPACES").split(QDir::listSeparator(), Qt::SkipEmptyParts);
         if (!bridge->start(qEnvironmentVariable("STANLEE_DISCOVERY_DIR"), workspaces))

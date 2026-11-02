@@ -902,6 +902,11 @@
                   "type": "number",
                   "minimum": -100000,
                   "maximum": 100000
+                },
+                "pressure": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1
                 }
               },
               "required": [
@@ -912,6 +917,19 @@
             },
             "minItems": 2,
             "maxItems": 4096
+          },
+          "modifiers": {
+            "type": "array",
+            "items": {
+              "enum": [
+                "shift",
+                "control",
+                "alt",
+                "meta"
+              ]
+            },
+            "uniqueItems": true,
+            "maxItems": 4
           }
         },
         "required": [
@@ -1205,6 +1223,128 @@
       "path_parameters": [
         "path"
       ],
+      "coverage_entries": [],
+      "platform_qualification": {
+        "macos": "unqualified",
+        "windows": "unqualified",
+        "linux": "unqualified"
+      },
+      "preconditions": [
+        "authenticated_session",
+        "current_document_id",
+        "expected_revision",
+        "editor_idle"
+      ],
+      "failures": [
+        "unauthorized",
+        "protocol_mismatch",
+        "invalid_arguments",
+        "unsupported_capability",
+        "transport_failure",
+        "invalid_document",
+        "stale_revision",
+        "busy"
+      ]
+    },
+    {
+      "id": "tool.inspect",
+      "input": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "output": {
+        "type": "object",
+        "properties": {
+          "session_id": {
+            "type": "string"
+          },
+          "document_id": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "session_id",
+          "document_id",
+          "revision"
+        ]
+      },
+      "effects": "observation",
+      "requires_revision": false,
+      "undo": "not_applicable",
+      "cancellation": "before_dispatch",
+      "native": "ToolProperties::getInfo; BaseTool::isPropertyEnabled",
+      "path_parameters": [],
+      "coverage_entries": [],
+      "platform_qualification": {
+        "macos": "unqualified",
+        "windows": "unqualified",
+        "linux": "unqualified"
+      },
+      "preconditions": [
+        "authenticated_session"
+      ],
+      "failures": [
+        "unauthorized",
+        "protocol_mismatch",
+        "invalid_arguments",
+        "unsupported_capability",
+        "transport_failure"
+      ]
+    },
+    {
+      "id": "tool.configure",
+      "input": {
+        "type": "object",
+        "properties": {
+          "values": {
+            "type": "object",
+            "minProperties": 1,
+            "maxProperties": 64,
+            "additionalProperties": {
+              "type": [
+                "number",
+                "boolean"
+              ]
+            }
+          }
+        },
+        "required": [
+          "values"
+        ],
+        "additionalProperties": false
+      },
+      "output": {
+        "type": "object",
+        "properties": {
+          "session_id": {
+            "type": "string"
+          },
+          "document_id": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "session_id",
+          "document_id",
+          "revision"
+        ]
+      },
+      "effects": "settings",
+      "requires_revision": true,
+      "undo": "not_applicable",
+      "cancellation": "before_dispatch",
+      "native": "ToolProperties::setBaseValue; BaseTool::saveSettings; ToolManager::notifyToolPropertiesChanged",
+      "path_parameters": [],
       "coverage_entries": [],
       "platform_qualification": {
         "macos": "unqualified",

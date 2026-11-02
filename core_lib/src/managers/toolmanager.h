@@ -43,6 +43,7 @@ public:
     BaseTool* getTool(ToolType eToolType);
     void setDefaultTool();
     void setCurrentTool(ToolType eToolType);
+    void notifyToolPropertiesChanged();
     void tabletSwitchToEraser();
     void tabletRestorePrevTool();
     bool setTemporaryTool(ToolType eToolType, QFlags<Qt::Key> keys, Qt::KeyboardModifiers modifiers);

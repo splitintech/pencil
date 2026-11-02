@@ -33,6 +33,9 @@
 #include <QtEndian>
 #include <cmath>
 #include <stdexcept>
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+#include <QPointingDevice>
+#endif
 #ifdef Q_OS_UNIX
 #include <sys/stat.h>
 #include <unistd.h>
@@ -150,6 +153,32 @@ QJsonArray operations()
     QFile file(":/automation/operations.json");
     if (!file.open(QIODevice::ReadOnly)) { return {}; }
     return QJsonDocument::fromJson(file.readAll()).object().value("operations").toArray();
+}
+QJsonArray inspectToolProperties(BaseTool* tool)
+{
+    QJsonArray result;
+    auto& properties = tool->toolProperties();
+    for (const auto& range : properties.typeRanges())
+    {
+        for (int id = range.first; id < range.second; ++id)
+        {
+            auto info = properties.getInfo(id);
+            if (info.type() == PropertyInfo::INVALID) { continue; }
+            QJsonObject property {{"id", id}, {"name", properties.identifier(id)},
+                {"value", QJsonValue::fromVariant(info.toVariant())}, {"enabled", tool->isPropertyEnabled(id)}};
+            if (info.type() == PropertyInfo::INTEGER)
+            {
+                property.insert("type", "integer"); property.insert("minimum", info.minInt()); property.insert("maximum", info.maxInt());
+            }
+            else if (info.type() == PropertyInfo::REAL)
+            {
+                property.insert("type", "number"); property.insert("minimum", info.minReal()); property.insert("maximum", info.maxReal());
+            }
+            else { property.insert("type", "boolean"); }
+            result.append(property);
+        }
+    }
+    return result;
 }
 void validate(const QJsonObject& args, const QJsonObject& schema)
 {
@@ -410,6 +439,53 @@ QJsonObject AutomationBridge::execute(const QString& op, const QJsonObject& args
             {"operations", operations}, {"workspaces", QJsonArray::fromStringList(mWorkspaces)}, {"qualified_alpha", false}};
     }
     if (op == "document.inspect") { return state(); }
+    if (op == "tool.inspect" || op == "tool.configure")
+    {
+        auto tool = mEditor->tools()->currentTool();
+        auto properties = inspectToolProperties(tool);
+        if (op == "tool.configure")
+        {
+            require(args.value("values").isObject(), "invalid_arguments", "Tool values must be an object");
+            auto values = args.value("values").toObject();
+            require(!values.isEmpty() && values.size() <= 64, "invalid_arguments", "Provide 1–64 tool properties");
+            QVector<QPair<int, PropertyInfo>> changes;
+            for (auto it = values.begin(); it != values.end(); ++it)
+            {
+                QJsonObject definition;
+                for (const auto& item : properties)
+                {
+                    if (item.toObject().value("name").toString() == it.key()) { definition = item.toObject(); break; }
+                }
+                require(!definition.isEmpty(), "invalid_arguments", "Unknown tool property: " + it.key());
+                require(definition.value("enabled").toBool(), "invalid_context", "Tool property is disabled for this layer");
+                int id = definition.value("id").toInt();
+                auto info = tool->toolProperties().getInfo(id);
+                if (info.type() == PropertyInfo::BOOL)
+                {
+                    require(it.value().isBool(), "invalid_arguments", "Tool property requires boolean value");
+                    info.setBaseValue(it.value().toBool());
+                }
+                else
+                {
+                    double number = it.value().toDouble(NAN);
+                    require(std::isfinite(number) && number >= definition.value("minimum").toDouble() && number <= definition.value("maximum").toDouble(),
+                            "invalid_arguments", "Tool property is outside its native range");
+                    if (info.type() == PropertyInfo::INTEGER)
+                    {
+                        require(std::floor(number) == number, "invalid_arguments", "Tool property requires integer value");
+                        info.setBaseValue(static_cast<int>(number));
+                    }
+                    else { info.setBaseValue(static_cast<qreal>(number)); }
+                }
+                changes.append(qMakePair(id, info));
+            }
+            for (const auto& change : changes) { tool->toolProperties().setBaseValue(change.first, change.second); }
+            tool->saveSettings();
+            mEditor->tools()->notifyToolPropertiesChanged();
+            properties = inspectToolProperties(tool);
+        }
+        return {{"tool", static_cast<int>(tool->type())}, {"name", tool->typeName()}, {"properties", properties}};
+    }
     if (op == "events.poll")
     {
         int after = args.contains("after") ? integer(args, "after", 0, 2147483647) : 0;
@@ -530,6 +606,19 @@ QJsonObject AutomationBridge::execute(const QString& op, const QJsonObject& args
                 "invalid_context", "Stroke requires a visible paintable layer and a supported drawing tool");
         auto points = args.value("points").toArray();
         require(points.size() >= 2 && points.size() <= 4096, "invalid_arguments", "Provide 2–4096 canvas points");
+        Qt::KeyboardModifiers modifiers = Qt::NoModifier;
+        if (args.contains("modifiers"))
+        {
+            require(args.value("modifiers").isArray(), "invalid_arguments", "Modifiers must be an array");
+            auto keys = args.value("modifiers").toArray();
+            require(keys.size() <= 4, "invalid_arguments", "Too many keyboard modifiers");
+            for (const auto& key : keys)
+            {
+                QString name = key.toString();
+                require(name == "shift" || name == "control" || name == "alt" || name == "meta", "invalid_arguments", "Unknown keyboard modifier");
+                modifiers |= name == "shift" ? Qt::ShiftModifier : name == "control" ? Qt::ControlModifier : name == "alt" ? Qt::AltModifier : Qt::MetaModifier;
+            }
+        }
         for (const auto& value : points)
         {
             auto point = value.toObject();
@@ -538,17 +627,31 @@ QJsonObject AutomationBridge::execute(const QString& op, const QJsonObject& args
                 double coordinate = point.value(key).toDouble(NAN);
                 require(std::isfinite(coordinate) && std::abs(coordinate) <= 100000, "invalid_arguments", "Invalid stroke coordinate");
             }
-            require(!point.contains("pressure"), "unsupported_capability", "Pressure samples are not implemented yet");
+            require(point.size() == 2 || (point.size() == 3 && point.contains("pressure")), "invalid_arguments", "Unknown stroke sample property");
+            if (point.contains("pressure"))
+            {
+                double pressure = point.value("pressure").toDouble(NAN);
+                require(std::isfinite(pressure) && pressure >= 0 && pressure <= 1, "invalid_arguments", "Pressure must be between zero and one");
+            }
         }
         for (int i = 0; i < points.size(); ++i)
         {
             auto value = points.at(i).toObject();
             QPointF canvasPoint(value.value("x").toDouble(), value.value("y").toDouble());
             QPointF screenPoint = mEditor->view()->mapCanvasToScreen(canvasPoint);
-            auto type = i == 0 ? QEvent::MouseButtonPress : i == points.size()-1 ? QEvent::MouseButtonRelease : QEvent::MouseMove;
-            QMouseEvent mouse(type, screenPoint, screenPoint, i == 0 || i == points.size()-1 ? Qt::LeftButton : Qt::NoButton,
-                i == points.size()-1 ? Qt::NoButton : Qt::LeftButton, Qt::NoModifier);
-            PointerEvent event(&mouse, canvasPoint);
+            auto type = i == 0 ? QEvent::TabletPress : i == points.size()-1 ? QEvent::TabletRelease : QEvent::TabletMove;
+            auto button = i == 0 || i == points.size()-1 ? Qt::LeftButton : Qt::NoButton;
+            Qt::MouseButtons buttons = i == points.size()-1 ? Qt::NoButton : Qt::LeftButton;
+            qreal pressure = value.value("pressure").toDouble(1.0);
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+            static QPointingDevice device("Stanlee native stroke", 0x53544e, QInputDevice::DeviceType::Stylus,
+                QPointingDevice::PointerType::Pen, QInputDevice::Capability::Position | QInputDevice::Capability::Pressure, 1, 1);
+            QTabletEvent tablet(type, &device, screenPoint, screenPoint, pressure, 0, 0, 0, 0, 0, modifiers, button, buttons);
+#else
+            QTabletEvent tablet(type, screenPoint, screenPoint, QTabletEvent::Stylus, QTabletEvent::Pen,
+                pressure, 0, 0, 0, 0, 0, modifiers, 0x53544e, button, buttons);
+#endif
+            PointerEvent event(&tablet, canvasPoint);
             if (i == 0) { canvas->pointerPressEvent(&event); }
             else if (i == points.size()-1) { canvas->pointerReleaseEvent(&event); }
             else { canvas->pointerMoveEvent(&event); }

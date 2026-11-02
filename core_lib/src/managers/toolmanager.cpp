@@ -150,6 +150,11 @@ void ToolManager::setCurrentTool(ToolType eToolType)
     }
 }
 
+void ToolManager::notifyToolPropertiesChanged()
+{
+    if (mCurrentTool) { emit toolChanged(mCurrentTool->type()); }
+}
+
 bool ToolManager::leavingThisTool()
 {
     return currentTool()->leavingThisTool();

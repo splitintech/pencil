@@ -49,7 +49,9 @@ remain pending.
 Current qualification is macOS arm64 only. Windows uses a current-user-owned
 discovery DACL and QLocalServer user-access named pipes; runtime qualification
 is pending Windows CI. Invalid or uninspectable ACLs fail closed.
-Full editor coverage, pressure/modifier samples, atomic batches, robust document
+Full editor coverage, atomic batches, robust document
 recovery, platform/client acceptance and signed release packaging remain pending.
 This integration is not a complete Stanlee alpha and is not ready for upstream
 feature review. See the public build plan and coverage register for release gates.
+
+`tool.inspect` returns native property names, enabled states and limits. `tool.configure` validates all supplied values before applying them and notifying native tool widgets. Stroke samples use native tablet events with pressure and keyboard modifiers on Qt 5 and Qt 6.
