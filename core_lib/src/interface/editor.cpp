@@ -161,7 +161,14 @@ void Editor::onCurrentLayerWillChange(int index)
     Q_UNUSED(index)
 
     if (select() && select()->somethingSelected()) {
-        static_cast<MoveTool*>(tools()->getTool(MOVE))->applyTransformationAndDeselect();
+        if (canEditLayer(layers()->currentLayer(), false))
+        {
+            static_cast<MoveTool*>(tools()->getTool(MOVE))->applyTransformationAndDeselect();
+        }
+        else
+        {
+            deselectAll();
+        }
     }
 }
 
@@ -879,7 +886,14 @@ void Editor::scrubTo(int frame)
         stroke = mScribbleArea->finishStrokeForFrameChange();
     }
     if (select() && select()->somethingSelected()) {
-        static_cast<MoveTool*>(tools()->getTool(MOVE))->applyTransformationAndDeselect();
+        if (canEditLayer(layers()->currentLayer(), false))
+        {
+            static_cast<MoveTool*>(tools()->getTool(MOVE))->applyTransformationAndDeselect();
+        }
+        else
+        {
+            deselectAll();
+        }
     }
 
     if (frame < 1) { frame = 1; }
