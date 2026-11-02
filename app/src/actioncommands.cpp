@@ -696,6 +696,7 @@ Status ActionCommands::addNewKey()
 
 void ActionCommands::exposeSelectedFrames(int offset)
 {
+    if (!mEditor->canEditLayer(mEditor->layers()->currentLayer())) { return; }
     Layer* currentLayer = mEditor->layers()->currentLayer();
 
     bool hasSelectedFrames = currentLayer->hasAnySelectedFrames();
@@ -732,6 +733,7 @@ void ActionCommands::subtractExposureFromSelectedFrames()
 
 Status ActionCommands::insertKeyFrameAtCurrentPosition()
 {
+    if (!mEditor->canEditLayer(mEditor->layers()->currentLayer())) { return Status::SAFE; }
     Layer* currentLayer = mEditor->layers()->currentLayer();
     int currentPosition = mEditor->currentFrame();
 
@@ -741,6 +743,7 @@ Status ActionCommands::insertKeyFrameAtCurrentPosition()
 
 void ActionCommands::removeSelectedFrames()
 {
+    if (!mEditor->canEditLayer(mEditor->layers()->currentLayer())) { return; }
     Layer* currentLayer = mEditor->layers()->currentLayer();
 
     if (!currentLayer->hasAnySelectedFrames()) { return; }
@@ -764,6 +767,7 @@ void ActionCommands::removeSelectedFrames()
 
 void ActionCommands::reverseSelectedFrames()
 {
+    if (!mEditor->canEditLayer(mEditor->layers()->currentLayer())) { return; }
     Layer* currentLayer = mEditor->layers()->currentLayer();
 
     if (!currentLayer->reverseOrderOfSelection()) {
@@ -806,11 +810,7 @@ void ActionCommands::duplicateKey()
 {
     Layer* layer = mEditor->layers()->currentLayer();
     if (layer == nullptr) return;
-    if (!layer->visible())
-    {
-        mEditor->getScribbleArea()->showLayerNotVisibleWarning();
-        return;
-    }
+    if (!mEditor->canEditLayer(layer)) { return; }
 
     KeyFrame* key = layer->getKeyFrameAt(mEditor->currentFrame());
     if (key == nullptr) return;
@@ -844,12 +844,13 @@ void ActionCommands::duplicateKey()
 void ActionCommands::moveFrameForward()
 {
     Layer* layer = mEditor->layers()->currentLayer();
-    if (layer)
+    if (layer == nullptr) { return; }
+
+    if (!mEditor->canEditLayer(layer)) { return; }
+
+    if (layer->moveKeyFrame(mEditor->currentFrame(), 1))
     {
-        if (layer->moveKeyFrame(mEditor->currentFrame(), 1))
-        {
-            mEditor->scrubForward();
-        }
+        mEditor->scrubForward();
     }
     mEditor->layers()->notifyAnimationLengthChanged();
     emit mEditor->framesModified();
@@ -858,12 +859,13 @@ void ActionCommands::moveFrameForward()
 void ActionCommands::moveFrameBackward()
 {
     Layer* layer = mEditor->layers()->currentLayer();
-    if (layer)
+    if (layer == nullptr) { return; }
+
+    if (!mEditor->canEditLayer(layer)) { return; }
+
+    if (layer->moveKeyFrame(mEditor->currentFrame(), -1))
     {
-        if (layer->moveKeyFrame(mEditor->currentFrame(), -1))
-        {
-            mEditor->scrubBackward();
-        }
+        mEditor->scrubBackward();
     }
     emit mEditor->framesModified();
 }
