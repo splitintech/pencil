@@ -22,6 +22,8 @@ set(TEST_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/src/test_propertyinfo.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/src/test_qminiz.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/src/test_toolsettings.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/src/test_strokescrubbing.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/src/test_hiddenlayerediting.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/src/test_vectorimage.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/src/test_viewmanager.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/src/test_util.cpp

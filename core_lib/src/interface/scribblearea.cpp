@@ -26,6 +26,7 @@ GNU General Public License for more details.
 #include "basetool.h"
 #include "transformtool.h"
 #include "pointerevent.h"
+#include "stroketool.h"
 #include "beziercurve.h"
 #include "object.h"
 #include "editor.h"
@@ -424,6 +425,10 @@ void ScribbleArea::keyPressEvent(QKeyEvent *event)
 
 void ScribbleArea::keyEventForSelection(QKeyEvent* event)
 {
+    bool modifiesSelection = event->key() == Qt::Key_Left || event->key() == Qt::Key_Right
+        || event->key() == Qt::Key_Up || event->key() == Qt::Key_Down
+        || event->key() == Qt::Key_Return || event->key() == Qt::Key_Backspace;
+    if (modifiesSelection && !mEditor->canEditLayer(mEditor->layers()->currentLayer())) { return; }
     auto selectMan = mEditor->select();
     switch (event->key())
     {
@@ -649,6 +654,7 @@ void ScribbleArea::tabletEvent(QTabletEvent *e)
 
 void ScribbleArea::pointerPressEvent(PointerEvent* event)
 {
+    mLastStrokeEvent.reset();
     bool isCameraLayer = mEditor->layers()->currentLayer()->type() == Layer::CAMERA;
     if ((currentTool()->type() != HAND || isCameraLayer) && (event->button() != Qt::RightButton) && (event->button() != Qt::MiddleButton || isCameraLayer))
     {
@@ -670,19 +676,53 @@ void ScribbleArea::pointerPressEvent(PointerEvent* event)
     } else if (event->button() == Qt::LeftButton)
     {
         currentTool()->pointerPressEvent(event);
+        auto strokeTool = qobject_cast<StrokeTool*>(currentTool());
+        if (strokeTool && strokeTool->isStrokeInProgress())
+        {
+            mLastStrokeEvent.reset(new PointerEvent(*event, event->eventType()));
+        }
     }
 }
 
 void ScribbleArea::pointerMoveEvent(PointerEvent* event)
 {
     currentTool()->pointerMoveEvent(event);
+    if (mLastStrokeEvent && (event->buttons() & Qt::LeftButton)
+        && event->inputType() == mLastStrokeEvent->inputType())
+    {
+        mLastStrokeEvent.reset(new PointerEvent(*event, event->eventType()));
+    }
 }
 
 void ScribbleArea::pointerReleaseEvent(PointerEvent* event)
 {
     currentTool()->pointerReleaseEvent(event);
+    if (mLastStrokeEvent && event->inputType() == mLastStrokeEvent->inputType())
+    {
+        mLastStrokeEvent.reset();
+    }
 
     editor()->tools()->tryClearTemporaryTool(event->button());
+}
+
+std::unique_ptr<PointerEvent> ScribbleArea::finishStrokeForFrameChange()
+{
+    auto strokeTool = qobject_cast<StrokeTool*>(currentTool());
+    if (!mLastStrokeEvent || !strokeTool || !strokeTool->isStrokeInProgress())
+    {
+        return nullptr;
+    }
+
+    std::unique_ptr<PointerEvent> resume(new PointerEvent(*mLastStrokeEvent, PointerEvent::Press));
+    PointerEvent release(*mLastStrokeEvent, PointerEvent::Release);
+    mLastStrokeEvent.reset();
+    strokeTool->pointerReleaseEvent(&release);
+    return resume;
+}
+
+void ScribbleArea::resumeStrokeAfterFrameChange(PointerEvent* event)
+{
+    pointerPressEvent(event);
 }
 
 void ScribbleArea::handleDoubleClick()
@@ -1225,6 +1265,7 @@ void ScribbleArea::endStroke()
 
 void ScribbleArea::flipSelection(bool flipVertical)
 {
+    if (!mEditor->canEditLayer(mEditor->layers()->currentLayer())) { return; }
     mEditor->select()->flipSelection(flipVertical);
 }
 
@@ -1344,6 +1385,7 @@ QPointF ScribbleArea::getCentralPoint()
 
 void ScribbleArea::applyTransformedSelection()
 {
+    if (!mEditor->canEditLayer(mEditor->layers()->currentLayer())) { return; }
     mCanvasPainter.ignoreTransformedSelection();
 
     Layer* layer = mEditor->layers()->currentLayer();
@@ -1454,6 +1496,7 @@ BaseTool* ScribbleArea::currentTool() const
 
 void ScribbleArea::deleteSelection()
 {
+    if (!mEditor->canEditLayer(mEditor->layers()->currentLayer())) { return; }
     auto selectMan = mEditor->select();
     if (selectMan->somethingSelected())      // there is something selected
     {
@@ -1485,6 +1528,8 @@ void ScribbleArea::clearImage()
 {
     Layer* layer = mEditor->layers()->currentLayer();
     if (layer == nullptr) { return; }
+
+    if (!mEditor->canEditLayer(layer)) { return; }
 
     if (layer->type() == Layer::VECTOR)
     {
