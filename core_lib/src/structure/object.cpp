@@ -37,6 +37,7 @@ GNU General Public License for more details.
 #include "util.h"
 #include "bitmapimage.h"
 #include "vectorimage.h"
+#include "soundclip.h"
 #include "fileformat.h"
 #include "activeframepool.h"
 
@@ -80,18 +81,33 @@ std::unique_ptr<Object> Object::cloneForSnapshot() const
         target->loadDomElement(metadata, result->dataDir(), [] {});
         bool valid = true;
         source->foreachKeyFrame([&](KeyFrame* key) {
-            // Loading existing backing data is read-only. Never use bitmap
-            // clone(), which can create a temporary copy in the source folder.
-            key->loadFile();
-            KeyFrame* copied = source->type() == Layer::BITMAP
-                ? static_cast<KeyFrame*>(new BitmapImage(*static_cast<BitmapImage*>(key))) : key->clone();
+            // Never load into the live keyframe or use bitmap clone(), which
+            // can create a temporary file inside the source working directory.
+            std::unique_ptr<KeyFrame> copied(source->type() == Layer::BITMAP
+                ? static_cast<KeyFrame*>(new BitmapImage(*static_cast<BitmapImage*>(key))) : key->clone());
             if (!copied) { valid = false; return; }
+            if (source->type() == Layer::BITMAP)
+            {
+                copied->loadFile();
+                if (!key->fileName().isEmpty() && !copied->isLoaded()) { valid = false; return; }
+            }
+            if (source->type() == Layer::SOUND)
+            {
+                static_cast<SoundClip*>(copied.get())->setDuration(static_cast<SoundClip*>(key)->duration());
+                if (!key->fileName().isEmpty())
+                {
+                    QString path = QDir(result->dataDir()).filePath(QString("snapshot-sound-%1-%2.%3")
+                        .arg(source->id()).arg(key->pos()).arg(QFileInfo(key->fileName()).suffix()));
+                    if (!QFile::copy(key->fileName(), path)) { valid = false; return; }
+                    copied->setFileName(path);
+                }
+            }
             if (source->type() == Layer::BITMAP || source->type() == Layer::VECTOR)
             {
                 copied->setFileName(QString());
                 copied->modification();
             }
-            target->addOrReplaceKeyFrame(key->pos(), copied);
+            target->addOrReplaceKeyFrame(key->pos(), copied.release());
         });
         if (!valid) { return nullptr; }
         result->addLayer(target.release());

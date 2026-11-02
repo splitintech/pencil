@@ -28,6 +28,7 @@ GNU General Public License for more details.
 #include "layersound.h"
 #include "layercamera.h"
 #include "bitmapimage.h"
+#include "soundclip.h"
 
 
 TEST_CASE("Object::addXXXLayer()")
@@ -311,4 +312,89 @@ TEST_CASE("Native snapshots preserve live content and source working files")
     REQUIRE_FALSE(manager.save(snapshot.get(), directory.filePath("missing/failure.pclx")).ok());
     REQUIRE(source.isModified());
     REQUIRE(image->isModified());
+}
+
+TEST_CASE("Snapshots load bitmap backing data only into the independent copy")
+{
+    QTemporaryDir directory;
+    REQUIRE(directory.isValid());
+    Object source;
+    source.init();
+    auto layer = source.addNewBitmapLayer();
+    QString backing = directory.filePath("backing.png");
+    bool validFile = false;
+    SECTION("Readable bitmap")
+    {
+        QImage image(8, 8, QImage::Format_ARGB32_Premultiplied);
+        image.fill(Qt::red);
+        REQUIRE(image.save(backing));
+        validFile = true;
+    }
+    SECTION("Missing bitmap") {}
+    SECTION("Corrupt bitmap")
+    {
+        QFile file(backing);
+        REQUIRE(file.open(QIODevice::WriteOnly));
+        REQUIRE(file.write("invalid bitmap") > 0);
+    }
+    layer->addOrReplaceKeyFrame(3, new BitmapImage(QPoint(11, 22), backing));
+    auto original = layer->getBitmapImageAtFrame(3);
+    REQUIRE_FALSE(original->isLoaded());
+    bool modified = source.isModified();
+    auto snapshot = source.cloneForSnapshot();
+    REQUIRE(static_cast<bool>(snapshot) == validFile);
+    REQUIRE_FALSE(original->isLoaded());
+    REQUIRE_FALSE(original->isModified());
+    REQUIRE(original->fileName() == backing);
+    REQUIRE(source.isModified() == modified);
+    if (snapshot)
+    {
+        auto copy = static_cast<LayerBitmap*>(snapshot->getLayer(0))->getBitmapImageAtFrame(3);
+        REQUIRE(copy->isLoaded());
+        REQUIRE(copy->fileName().isEmpty());
+        REQUIRE(copy->pixel(11, 22) == qRgba(255, 0, 0, 255));
+    }
+}
+
+TEST_CASE("Snapshots own sound asset bytes and retain native timing")
+{
+    QTemporaryDir directory;
+    REQUIRE(directory.isValid());
+    QString backing = directory.filePath("sound.wav");
+    bool exists = false;
+    SECTION("Readable asset")
+    {
+        QFile file(backing);
+        REQUIRE(file.open(QIODevice::WriteOnly));
+        REQUIRE(file.write("opaque sound asset fixture") > 0);
+        exists = true;
+    }
+    SECTION("Missing asset") {}
+    Object source;
+    source.init();
+    auto layer = source.addNewSoundLayer();
+    auto original = new SoundClip;
+    REQUIRE(original->init(backing).ok());
+    original->setDuration(1234);
+    original->setLength(37);
+    original->setSoundClipName("Fixture");
+    layer->addOrReplaceKeyFrame(5, original);
+    auto snapshot = source.cloneForSnapshot();
+    REQUIRE(static_cast<bool>(snapshot) == exists);
+    REQUIRE(original->fileName() == backing);
+    REQUIRE(original->duration() == 1234);
+    if (snapshot)
+    {
+        auto copy = static_cast<LayerSound*>(snapshot->getLayer(0))->getSoundClipWhichCovers(5);
+        REQUIRE(copy != nullptr);
+        REQUIRE(copy->duration() == 1234);
+        REQUIRE(copy->length() == 37);
+        REQUIRE(copy->soundClipName() == "Fixture");
+        REQUIRE(copy->fileName() != original->fileName());
+        REQUIRE(copy->fileName().startsWith(snapshot->dataDir()));
+        REQUIRE(QFile::remove(backing));
+        QFile copied(copy->fileName());
+        REQUIRE(copied.open(QIODevice::ReadOnly));
+        REQUIRE(copied.readAll() == "opaque sound asset fixture");
+    }
 }
