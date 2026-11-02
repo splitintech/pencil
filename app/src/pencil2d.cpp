@@ -56,8 +56,8 @@ Pencil2D::Pencil2D(int& argc, char** argv) :
     setApplicationName("Pencil2D");
     setApplicationDisplayName("Pencil2D");
 #ifdef STANLEE_AUTOMATION
-    setOrganizationName("SplitIn");
-    setOrganizationDomain("splitin.net");
+    setOrganizationName(pencilSettingsNamespace());
+    setOrganizationDomain(pencilSettingsNamespace().toLower() + ".stanlee.splitin.net");
     setApplicationName("Pencil2D-Stanlee");
     setApplicationDisplayName("Pencil2D–Stanlee");
     QString settingsDirectory = qEnvironmentVariable("STANLEE_SETTINGS_DIR");

@@ -225,7 +225,9 @@ const static int MaxFramesBound = 9999;
 
 // Settings Group/Key Name
 #ifdef STANLEE_AUTOMATION
-#define PENCIL2D "Pencil2D-Stanlee"
+class QString;
+QString pencilSettingsNamespace();
+#define PENCIL2D pencilSettingsNamespace()
 #else
 #define PENCIL2D "Pencil"
 #endif

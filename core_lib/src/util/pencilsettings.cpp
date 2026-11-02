@@ -18,6 +18,24 @@ GNU General Public License for more details.
 
 #include <QStringList>
 #include <QDebug>
+#ifdef STANLEE_AUTOMATION
+#include <QCryptographicHash>
+#include <QFileInfo>
+
+QString pencilSettingsNamespace()
+{
+    static const QString name = [] {
+        QString profile = qEnvironmentVariable("STANLEE_SETTINGS_DIR");
+        if (profile.isEmpty()) { return QString("Pencil2D-Stanlee"); }
+        QFileInfo info(profile);
+        QString path = info.canonicalFilePath();
+        if (path.isEmpty()) { path = info.absoluteFilePath(); }
+        QByteArray identity = QCryptographicHash::hash(path.toUtf8(), QCryptographicHash::Sha256).toHex().left(24);
+        return QString("Pencil2D-Stanlee-") + QString::fromLatin1(identity);
+    }();
+    return name;
+}
+#endif
 
 
 // ==== Singleton ====
