@@ -243,6 +243,9 @@ bool AutomationBridge::start(const QString& directory, const QStringList& worksp
     QJsonObject record { {"protocol_version", 1}, {"session_id", mSessionId}, {"endpoint", mServer->fullServerName()},
         {"token", mToken}, {"pid", static_cast<double>(QCoreApplication::applicationPid())} };
     if (file.write(QJsonDocument(record).toJson(QJsonDocument::Compact)) < 0 || !file.commit()) { stop(); return false; }
+#ifdef Q_OS_WIN
+    if (!protectWindowsDirectory(mDiscoveryFile) || !privateWindowsPath(mDiscoveryFile)) { stop(); return false; }
+#endif
     mStatus = new QLabel(tr("Automation enabled (local workspace access)"), mWindow);
     mWindow->statusBar()->addPermanentWidget(mStatus);
     auto revoke = new QPushButton(tr("Disconnect automation"), mWindow);
