@@ -4,10 +4,8 @@
 #include <QApplication>
 #include <QClipboard>
 #include <QKeyEvent>
-#include <QMessageBox>
 #include <QSettings>
 #include <QTemporaryDir>
-#include <QTimer>
 #include "bitmapimage.h"
 #include "clipboardmanager.h"
 #include "editor.h"
@@ -30,11 +28,19 @@ struct HiddenLayerSettings
     ~HiddenLayerSettings() { QSettings::setDefaultFormat(previous); }
 };
 
+class HiddenLayerCanvas : public ScribbleArea
+{
+public:
+    HiddenLayerCanvas() : ScribbleArea(nullptr) {}
+    void showLayerNotVisibleWarning() override { ++warnings; }
+    int warnings = 0;
+};
+
 struct HiddenLayerFixture
 {
     HiddenLayerSettings settings;
     Editor editor;
-    ScribbleArea canvas { nullptr };
+    HiddenLayerCanvas canvas;
     LayerBitmap* layer;
 
     HiddenLayerFixture()
@@ -56,21 +62,9 @@ struct HiddenLayerFixture
 
     template<typename Action> void expectWarning(Action action)
     {
-        bool warned = false;
-        QTimer dismiss;
-        dismiss.setSingleShot(true);
-        QObject::connect(&dismiss, &QTimer::timeout, [&] {
-            auto dialog = qobject_cast<QMessageBox*>(QApplication::activeModalWidget());
-            if (dialog)
-            {
-                warned = true;
-                dialog->accept();
-            }
-        });
-        dismiss.start(0);
+        int previousWarnings = canvas.warnings;
         action();
-        dismiss.stop();
-        REQUIRE(warned);
+        REQUIRE(canvas.warnings == previousWarnings + 1);
     }
 };
 }

@@ -146,7 +146,7 @@ public slots:
     void updateToolCursor();
     void paletteColorChanged(QColor);
 
-    void showLayerNotVisibleWarning();
+    virtual void showLayerNotVisibleWarning();
     void onTileUpdated(TiledBuffer* tiledBuffer, Tile* tile);
     void onTileCreated(TiledBuffer* tiledBuffer, Tile* tile);
 

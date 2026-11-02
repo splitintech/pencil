@@ -114,7 +114,7 @@ jobs:
       - name: Build Pencil2D
         run: ${{runner.os != 'Windows' && '${BUILD_CMD} make -C build' || 'cd build; nmake'}}
 
-      # Use portable widget rendering for modal-dialog tests on headless runners.
+      # Use portable widget rendering and clipboard support on headless runners.
       - name: Run tests
         run: ${{runner.os == 'Linux' && '${BUILD_CMD}' || ''}} env QT_QPA_PLATFORM=offscreen QT_STYLE_OVERRIDE=Fusion build/tests/tests
 
