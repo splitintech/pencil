@@ -96,6 +96,9 @@ GNU General Public License for more details.
 namespace {
     QString getWindowTitle() {
         QString version(APP_VERSION);
+#ifdef STANLEE_AUTOMATION
+        return QString("[*]Pencil2D–Stanlee %1").arg(version);
+#else
         if (version.startsWith("99.0.0")) {
             return QString("[*]Pencil2D Nightly Build %1").arg(BUILD_DATE);
         } else if (version == "0.0.0.0") {
@@ -103,6 +106,7 @@ namespace {
         } else {
             return QString("[*]Pencil2D %1").arg(APP_VERSION);
         }
+#endif
     }
 }
 

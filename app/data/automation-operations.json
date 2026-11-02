@@ -1367,6 +1367,122 @@
         "stale_revision",
         "busy"
       ]
+    },
+    {
+      "id": "palette.inspect",
+      "input": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "output": {
+        "type": "object",
+        "properties": {
+          "session_id": {
+            "type": "string"
+          },
+          "document_id": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "session_id",
+          "document_id",
+          "revision"
+        ]
+      },
+      "effects": "observation",
+      "requires_revision": false,
+      "undo": "not_applicable",
+      "cancellation": "before_dispatch",
+      "native": "Object::getColor; ColorManager::frontColorNumber",
+      "path_parameters": [],
+      "coverage_entries": [],
+      "platform_qualification": {
+        "macos": "unqualified",
+        "windows": "unqualified",
+        "linux": "unqualified"
+      },
+      "preconditions": [
+        "authenticated_session"
+      ],
+      "failures": [
+        "unauthorized",
+        "protocol_mismatch",
+        "invalid_arguments",
+        "unsupported_capability",
+        "transport_failure"
+      ]
+    },
+    {
+      "id": "color.select_index",
+      "input": {
+        "type": "object",
+        "properties": {
+          "index": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100000
+          }
+        },
+        "required": [
+          "index"
+        ],
+        "additionalProperties": false
+      },
+      "output": {
+        "type": "object",
+        "properties": {
+          "session_id": {
+            "type": "string"
+          },
+          "document_id": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "session_id",
+          "document_id",
+          "revision"
+        ]
+      },
+      "effects": "view",
+      "requires_revision": true,
+      "undo": "not_applicable",
+      "cancellation": "before_dispatch",
+      "native": "ColorManager::setColorNumber",
+      "path_parameters": [],
+      "coverage_entries": [],
+      "platform_qualification": {
+        "macos": "unqualified",
+        "windows": "unqualified",
+        "linux": "unqualified"
+      },
+      "preconditions": [
+        "authenticated_session",
+        "current_document_id",
+        "expected_revision",
+        "editor_idle"
+      ],
+      "failures": [
+        "unauthorized",
+        "protocol_mismatch",
+        "invalid_arguments",
+        "unsupported_capability",
+        "transport_failure",
+        "invalid_document",
+        "stale_revision",
+        "busy"
+      ]
     }
   ]
 }

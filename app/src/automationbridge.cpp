@@ -439,6 +439,16 @@ QJsonObject AutomationBridge::execute(const QString& op, const QJsonObject& args
             {"operations", operations}, {"workspaces", QJsonArray::fromStringList(mWorkspaces)}, {"qualified_alpha", false}};
     }
     if (op == "document.inspect") { return state(); }
+    if (op == "palette.inspect")
+    {
+        QJsonArray colors;
+        for (int i = 0; i < mEditor->object()->getColorCount(); ++i)
+        {
+            auto color = mEditor->object()->getColor(i);
+            colors.append(QJsonObject {{"index", i}, {"name", color.name}, {"color", color.color.name(QColor::HexArgb)}});
+        }
+        return {{"colors", colors}, {"selected_index", mEditor->color()->frontColorNumber()}};
+    }
     if (op == "tool.inspect" || op == "tool.configure")
     {
         auto tool = mEditor->tools()->currentTool();
@@ -593,9 +603,15 @@ QJsonObject AutomationBridge::execute(const QString& op, const QJsonObject& args
     else if (op == "tool.select") { mEditor->tools()->setCurrentTool(static_cast<ToolType>(integer(args, "type", 0, TOOL_TYPE_COUNT-1))); }
     else if (op == "color.set")
     {
+        require(mEditor->layers()->currentLayer()->type() != Layer::VECTOR, "unsupported_capability",
+                "Vector strokes use palette colors; inspect the palette and select an index instead");
         QColor color(text(args, "color"));
         require(color.isValid(), "invalid_arguments", "Invalid color");
         mEditor->color()->setFrontColor(color);
+    }
+    else if (op == "color.select_index")
+    {
+        mEditor->color()->setColorNumber(integer(args, "index", 0, mEditor->object()->getColorCount()-1));
     }
     else if (op == "canvas.stroke")
     {

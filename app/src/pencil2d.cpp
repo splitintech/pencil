@@ -77,6 +77,9 @@ Pencil2D::Pencil2D(int& argc, char** argv) :
 #if QT_VERSION >= QT_VERSION_CHECK(5, 7, 0)
     // Associate the application with our desktop entry
     setDesktopFileName("org.pencil2d.Pencil2D");
+#ifdef STANLEE_AUTOMATION
+    setDesktopFileName("net.splitin.Pencil2D-Stanlee");
+#endif
 #endif
     installTranslators();
 }
