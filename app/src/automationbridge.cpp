@@ -163,6 +163,36 @@ QString canonicalPath(const QString& path)
 #endif
     return resolved;
 }
+bool sameFile(const QString& first, const QString& second)
+{
+#ifdef Q_OS_WIN
+    if (first.compare(second, Qt::CaseInsensitive) == 0) { return true; }
+#else
+    if (first == second) { return true; }
+#endif
+    if (!QFileInfo::exists(first) || !QFileInfo::exists(second)) { return false; }
+#ifdef Q_OS_UNIX
+    struct stat a, b;
+    require(::stat(QFile::encodeName(first).constData(), &a) == 0 && ::stat(QFile::encodeName(second).constData(), &b) == 0,
+            "invalid_path", "Cannot verify snapshot file identity");
+    return a.st_dev == b.st_dev && a.st_ino == b.st_ino;
+#elif defined(Q_OS_WIN)
+    auto open = [](const QString& path) {
+        QString native = QDir::toNativeSeparators(path);
+        return CreateFileW(reinterpret_cast<LPCWSTR>(native.utf16()), FILE_READ_ATTRIBUTES,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+    };
+    HANDLE a = open(first), b = open(second);
+    BY_HANDLE_FILE_INFORMATION infoA = {}, infoB = {};
+    bool ok = a != INVALID_HANDLE_VALUE && b != INVALID_HANDLE_VALUE && GetFileInformationByHandle(a, &infoA) && GetFileInformationByHandle(b, &infoB);
+    if (a != INVALID_HANDLE_VALUE) { CloseHandle(a); }
+    if (b != INVALID_HANDLE_VALUE) { CloseHandle(b); }
+    require(ok, "invalid_path", "Cannot verify snapshot file identity");
+    return infoA.dwVolumeSerialNumber == infoB.dwVolumeSerialNumber && infoA.nFileIndexHigh == infoB.nFileIndexHigh && infoA.nFileIndexLow == infoB.nFileIndexLow;
+#else
+    throw Failure("unsupported_capability", "Snapshot target identity is unavailable on this platform");
+#endif
+}
 QJsonArray operations()
 {
     QFile file(":/automation/operations.json");
@@ -576,7 +606,9 @@ QJsonObject AutomationBridge::execute(const QString& op, const QJsonObject& args
     {
         QString path = grantedPath(text(args, "path"), false);
         require(QFileInfo(path).suffix().toLower() == "pclx", "unsupported_capability", "Snapshots require native pclx format");
-        require(path != mEditor->object()->filePath(), "invalid_path", "Snapshot must not overwrite the active document");
+        QString activePath = mEditor->object()->filePath();
+        require(activePath.isEmpty() || !sameFile(path, grantedPath(activePath, false)),
+                "invalid_path", "Snapshot must not overwrite the active document or an alias");
         require(!QFileInfo::exists(path) || args.value("overwrite").toBool(false), "overwrite_required", "Explicit overwrite required");
         auto snapshot = mEditor->snapshot();
         require(snapshot != nullptr, "native_failure", "Native snapshot cloning failed");
