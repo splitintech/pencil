@@ -1483,6 +1483,203 @@
         "stale_revision",
         "busy"
       ]
+    },
+    {
+      "id": "document.checkpoint",
+      "input": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "overwrite": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "additionalProperties": false
+      },
+      "output": {
+        "type": "object",
+        "properties": {
+          "session_id": {
+            "type": "string"
+          },
+          "document_id": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "session_id",
+          "document_id",
+          "revision"
+        ]
+      },
+      "effects": "file",
+      "requires_revision": true,
+      "undo": "active history unchanged; checkpoint stores content, not undo history",
+      "cancellation": "before_dispatch",
+      "native": "Editor::snapshot; Object::cloneForSnapshot; FileManager::save",
+      "path_parameters": [
+        "path"
+      ],
+      "coverage_entries": [],
+      "platform_qualification": {
+        "macos": "unqualified",
+        "windows": "unqualified",
+        "linux": "unqualified"
+      },
+      "preconditions": [
+        "authenticated_session",
+        "current_document_id",
+        "expected_revision",
+        "editor_idle"
+      ],
+      "failures": [
+        "unauthorized",
+        "protocol_mismatch",
+        "invalid_arguments",
+        "unsupported_capability",
+        "transport_failure",
+        "invalid_document",
+        "stale_revision",
+        "busy"
+      ]
+    },
+    {
+      "id": "document.recover",
+      "input": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "discard": {
+            "type": "boolean"
+          },
+          "source_path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "additionalProperties": false
+      },
+      "output": {
+        "type": "object",
+        "properties": {
+          "session_id": {
+            "type": "string"
+          },
+          "document_id": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "session_id",
+          "document_id",
+          "revision"
+        ]
+      },
+      "effects": "document_replace",
+      "requires_revision": true,
+      "undo": "document replacement invalidates prior handles and history; recovered content is dirty",
+      "cancellation": "before_dispatch",
+      "native": "FileManager::load; Editor::setObject",
+      "path_parameters": [
+        "path",
+        "source_path"
+      ],
+      "coverage_entries": [],
+      "platform_qualification": {
+        "macos": "unqualified",
+        "windows": "unqualified",
+        "linux": "unqualified"
+      },
+      "preconditions": [
+        "authenticated_session",
+        "current_document_id",
+        "expected_revision",
+        "editor_idle"
+      ],
+      "failures": [
+        "unauthorized",
+        "protocol_mismatch",
+        "invalid_arguments",
+        "unsupported_capability",
+        "transport_failure",
+        "invalid_document",
+        "stale_revision",
+        "busy"
+      ]
+    },
+    {
+      "id": "session.disconnect",
+      "input": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "output": {
+        "type": "object",
+        "properties": {
+          "session_id": {
+            "type": "string"
+          },
+          "document_id": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "session_id",
+          "document_id",
+          "revision"
+        ]
+      },
+      "effects": "session",
+      "requires_revision": true,
+      "undo": "not_applicable",
+      "cancellation": "before_dispatch",
+      "native": "AutomationBridge::execute",
+      "path_parameters": [],
+      "coverage_entries": [],
+      "platform_qualification": {
+        "macos": "unqualified",
+        "windows": "unqualified",
+        "linux": "unqualified"
+      },
+      "preconditions": [
+        "authenticated_session"
+      ],
+      "failures": [
+        "unauthorized",
+        "protocol_mismatch",
+        "invalid_arguments",
+        "unsupported_capability",
+        "transport_failure"
+      ]
     }
   ]
 }

@@ -374,6 +374,13 @@ void AutomationBridge::receive(QLocalSocket* socket)
     quint32 length = qToBigEndian(static_cast<quint32>(output.size()));
     socket->write(reinterpret_cast<const char*>(&length), 4);
     socket->write(output);
+    if (mRevokeAfterResponse)
+    {
+        mRevokeAfterResponse = false;
+        // disconnectFromServer flushes the response before disconnected is
+        // emitted. Do not abort this socket before the caller gets its result.
+        connect(socket, &QLocalSocket::disconnected, this, &AutomationBridge::stop);
+    }
     socket->disconnectFromServer();
 }
 
@@ -390,7 +397,7 @@ QJsonObject AutomationBridge::dispatch(const QJsonObject& request)
         for (const auto& item : operations()) { if (item.toObject().value("id").toString() == op) { contract = item.toObject(); break; } }
         require(!contract.isEmpty(), "unsupported_capability", "Operation is not implemented in this build");
         bool writes = contract.value("requires_revision").toBool();
-        if (op != "session.capabilities" && op != "events.poll" && !mEditor->object()->filePath().isEmpty())
+        if (op != "session.capabilities" && op != "session.disconnect" && op != "events.poll" && !mEditor->object()->filePath().isEmpty())
         {
             // A person can open another file through the normal GUI while a
             // bridge is attached. That never expands the automation grant.
@@ -410,7 +417,7 @@ QJsonObject AutomationBridge::dispatch(const QJsonObject& request)
         validate(request.value("arguments").toObject(), contract.value("input").toObject());
         mExecuting = true;
         QJsonObject result = execute(op, request.value("arguments").toObject());
-        if (writes) { changed(op, op != "document.snapshot"); }
+        if (writes) { changed(op, op != "document.snapshot" && op != "document.checkpoint"); }
         result.insert("session_id", mSessionId);
         result.insert("document_id", mDocumentId);
         result.insert("revision", static_cast<double>(mRevision));
@@ -492,6 +499,15 @@ QJsonObject AutomationBridge::execute(const QString& op, const QJsonObject& args
             {"operations", operations}, {"workspaces", QJsonArray::fromStringList(mWorkspaces)}, {"qualified_alpha", false}};
     }
     if (op == "document.inspect") { return state(); }
+    if (op == "session.disconnect")
+    {
+        // Revoke authentication immediately, including already connected peers.
+        // Finish this response before aborting sockets and removing discovery.
+        mServer->close();
+        mToken.clear();
+        mRevokeAfterResponse = true;
+        return {{"state", "disconnected"}};
+    }
     if (op == "palette.inspect")
     {
         QJsonArray colors;
@@ -579,14 +595,19 @@ QJsonObject AutomationBridge::execute(const QString& op, const QJsonObject& args
         return {{"mime_type", "image/png"}, {"data", QString::fromLatin1(bytes.toBase64())},
             {"width", size.width()}, {"height", size.height()}, {"frame", frame}};
     }
-    if (op == "document.new" || op == "document.open")
+    if (op == "document.new" || op == "document.open" || op == "document.recover")
     {
         require(!(mEditor->object()->isModified() || mEditor->undoRedo()->hasUnsavedChanges()) || args.value("discard").toBool(false),
                 "discard_required", "Unsaved document requires explicit discard");
-        Object* object = nullptr;
+        QString sourcePath;
+        if (op == "document.recover" && args.contains("source_path"))
+        {
+            sourcePath = grantedPath(text(args, "source_path"), false);
+        }
+        std::unique_ptr<Object> object;
         if (op == "document.new")
         {
-            object = new Object;
+            object.reset(new Object);
             object->init();
             object->addNewCameraLayer(); object->addNewBitmapLayer();
             object->data()->setCurrentLayer(1);
@@ -595,14 +616,21 @@ QJsonObject AutomationBridge::execute(const QString& op, const QJsonObject& args
         {
             QString path = grantedPath(text(args, "path"), true);
             FileManager manager;
-            object = manager.load(path);
+            object.reset(manager.load(path));
             require(object != nullptr && manager.error().ok(), "invalid_document", "Native document load failed");
         }
-        mEditor->setObject(object);
+        if (op == "document.recover")
+        {
+            // Recovery replaces the document and invalidates its old handles
+            // and history. It never saves over the source or marks it clean.
+            object->setFilePath(sourcePath);
+            object->setModified(true);
+        }
+        mEditor->setObject(object.release());
         mWindow->setWindowTitle(tr("Pencil2D–Stanlee"));
         return state();
     }
-    if (op == "document.snapshot")
+    if (op == "document.snapshot" || op == "document.checkpoint")
     {
         QString path = grantedPath(text(args, "path"), false);
         require(QFileInfo(path).suffix().toLower() == "pclx", "unsupported_capability", "Snapshots require native pclx format");
@@ -615,7 +643,8 @@ QJsonObject AutomationBridge::execute(const QString& op, const QJsonObject& args
         if (args.contains("fps")) { snapshot->data()->setFrameRate(integer(args, "fps", 1, 120)); }
         FileManager manager;
         require(manager.save(snapshot.get(), path).ok(), "native_failure", "Snapshot save failed");
-        return {{"path", path}, {"source_revision", static_cast<double>(mRevision)}};
+        return {{"path", path}, {"source_revision", static_cast<double>(mRevision)},
+            {"source_path", mEditor->object()->filePath()}, {"source_dirty", state().value("dirty")}};
     }
     if (op == "document.save")
     {

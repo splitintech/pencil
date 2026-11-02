@@ -48,5 +48,6 @@ private:
     qint64 mEventSequence = 0;
     QJsonArray mEvents;
     bool mExecuting = false;
+    bool mRevokeAfterResponse = false;
 };
 #endif
