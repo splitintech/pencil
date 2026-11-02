@@ -343,6 +343,12 @@ QJsonObject AutomationBridge::dispatch(const QJsonObject& request)
         for (const auto& item : operations()) { if (item.toObject().value("id").toString() == op) { contract = item.toObject(); break; } }
         require(!contract.isEmpty(), "unsupported_capability", "Operation is not implemented in this build");
         bool writes = contract.value("requires_revision").toBool();
+        if (op != "session.capabilities" && op != "events.poll" && !mEditor->object()->filePath().isEmpty())
+        {
+            // A person can open another file through the normal GUI while a
+            // bridge is attached. That never expands the automation grant.
+            grantedPath(mEditor->object()->filePath(), false);
+        }
         require(!mExecuting, "busy", "Another native operation is active");
         if (writes)
         {
