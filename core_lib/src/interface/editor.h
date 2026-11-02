@@ -172,6 +172,9 @@ public: //slots
 
     void setModified(int layerNumber, int frameNumber);
 
+    /// Guard interactive edits without restricting model operations such as undo/load.
+    bool canEditLayer(const Layer* layer, bool showWarning = true) const;
+
     void clearCurrentFrame();
 
     Status importImage(const QString& filePath, ImportImageConfig importConfig);
