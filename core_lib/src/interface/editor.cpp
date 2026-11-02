@@ -160,7 +160,14 @@ void Editor::onCurrentLayerWillChange(int index)
     Q_UNUSED(index)
 
     if (select() && select()->somethingSelected()) {
-        static_cast<MoveTool*>(tools()->getTool(MOVE))->applyTransformationAndDeselect();
+        if (canEditLayer(layers()->currentLayer(), false))
+        {
+            static_cast<MoveTool*>(tools()->getTool(MOVE))->applyTransformationAndDeselect();
+        }
+        else
+        {
+            deselectAll();
+        }
     }
 }
 
@@ -872,7 +879,14 @@ void Editor::setCurrentLayerIndex(int i)
 void Editor::scrubTo(int frame)
 {
     if (select() && select()->somethingSelected()) {
-        static_cast<MoveTool*>(tools()->getTool(MOVE))->applyTransformationAndDeselect();
+        if (canEditLayer(layers()->currentLayer(), false))
+        {
+            static_cast<MoveTool*>(tools()->getTool(MOVE))->applyTransformationAndDeselect();
+        }
+        else
+        {
+            deselectAll();
+        }
     }
 
     if (frame < 1) { frame = 1; }
