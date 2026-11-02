@@ -243,7 +243,6 @@ void Editor::pasteFromPreviousFrame()
         return;
     }
 
-
     if (currentLayer->type() == Layer::BITMAP)
     {
         backup(tr("Paste from Previous Keyframe"));
@@ -361,7 +360,6 @@ void Editor::paste()
     Q_ASSERT(currentLayer != nullptr);
 
     if (!canPaste()) { return; }
-
 
     if (clipboards()->framesIsEmpty()) {
 
@@ -814,8 +812,7 @@ void Editor::selectAll() const
     Layer* layer = layers()->currentLayer();
 
     QRectF rect;
-    
-    // Prevents Selection of an invisible layer, as this is likely a mistake and can be confusing for users, so show a warning and prevent the action
+
     if (!canEditLayer(layer)) { return; }
 
     if (layer->type() == Layer::BITMAP)
