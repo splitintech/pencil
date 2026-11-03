@@ -28,10 +28,17 @@ SoundPlayer::SoundPlayer()
 
 SoundPlayer::~SoundPlayer()
 {
-#ifdef Q_OS_WIN
-    // Qt Multimedia's DirectShow backend segfaults when it is destroyed while paused
-    stop();
-#endif
+    if (mMediaPlayer)
+    {
+        // QMediaPlayer borrows mBuffer. QObject deletes child objects only after
+        // derived members have died, so waiting for QObject's destructor leaves
+        // the decoder reading a destroyed device. Stop and join it while the
+        // buffer and clip are still alive, without forwarding teardown metadata.
+        disconnect(mMediaPlayer, nullptr, this, nullptr);
+        stop(); // Also avoids Qt DirectShow's paused-player destruction crash.
+        delete mMediaPlayer;
+        mMediaPlayer = nullptr;
+    }
 }
 
 void SoundPlayer::init(SoundClip* clip)
@@ -124,7 +131,7 @@ void SoundPlayer::makeConnections()
         qDebug() << "MediaPlayer Error: " << err;
     });
 
-    connect(mMediaPlayer, &QMediaPlayer::durationChanged, [this](qint64 duration)
+    connect(mMediaPlayer, &QMediaPlayer::durationChanged, this, [this](qint64 duration)
     {
         qDebug() << "MediaPlayer durationChanged :" << duration;
         emit durationChanged(this, duration);

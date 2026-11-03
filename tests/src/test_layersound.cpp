@@ -18,6 +18,9 @@ GNU General Public License for more details.
 #include "layersound.h"
 #include "soundclip.h"
 #include "util.h"
+#include "soundplayer.h"
+#include <QMediaPlayer>
+#include <QPointer>
 
 #include <memory>
 #include <QDir>
@@ -114,4 +117,38 @@ TEST_CASE("Load sound layer from XML")
         REQUIRE(frame != nullptr);
         REQUIRE(closestCanonicalPath(frame->fileName()) == closestCanonicalPath(dataDir.filePath("subdir/sound_001.wav")));
     }
+}
+
+TEST_CASE("Sound decoder is destroyed before its borrowed input device")
+{
+    QTemporaryDir directory;
+    REQUIRE(directory.isValid());
+    QFile file(directory.filePath("short.wav"));
+    REQUIRE(file.open(QIODevice::WriteOnly));
+    // One silent 16-bit mono sample at 8 kHz, with a complete RIFF header.
+    const QByteArray wav = QByteArray::fromHex(
+        "524946462600000057415645666d74201000000001000100401f0000803e00000200100064617461020000000000");
+    REQUIRE(file.write(wav) == wav.size());
+    file.close();
+    SoundClip clip;
+    REQUIRE(clip.init(file.fileName()).ok());
+    auto player = new SoundPlayer;
+    player->init(&clip);
+    auto decoder = player->findChild<QMediaPlayer*>();
+    REQUIRE(decoder != nullptr);
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+    QPointer<QIODevice> device = const_cast<QIODevice*>(decoder->sourceDevice());
+#else
+    QPointer<QIODevice> device = const_cast<QIODevice*>(decoder->mediaStream());
+#endif
+    REQUIRE(!device.isNull());
+    bool destroyed = false;
+    bool deviceAlive = false;
+    QObject::connect(decoder, &QObject::destroyed, [&] {
+        destroyed = true;
+        deviceAlive = !device.isNull();
+    });
+    clip.detachPlayer();
+    REQUIRE(destroyed);
+    REQUIRE(deviceAlive);
 }
