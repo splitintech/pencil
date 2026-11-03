@@ -65,13 +65,13 @@ private:
     Editor *mEditor;
     QTextStream mOut;
     QTextStream mErr;
-    void exportMovie(const QString &outputPath,
+    bool exportMovie(const QString &outputPath,
                      const LayerCamera *cameraLayer,
                      const QSize &exportSize,
                      int startFrame,
                      int endFrame,
                      bool transparency);
-    void exportImageSequence(const QString &outputPath,
+    bool exportImageSequence(const QString &outputPath,
                              const QString &format,
                              const LayerCamera *cameraLayer,
                              const QSize &exportSize,

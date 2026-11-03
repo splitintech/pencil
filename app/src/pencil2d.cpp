@@ -93,7 +93,7 @@ Pencil2D::~Pencil2D()
 Status Pencil2D::handleCommandLineOptions()
 {
     CommandLineParser parser;
-    parser.process(arguments());
+    if (!parser.process(arguments())) { return Status::FAIL; }
 
 #ifndef QT_DEBUG
     if (isInstanceOpen()) {

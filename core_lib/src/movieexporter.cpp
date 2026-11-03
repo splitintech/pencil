@@ -257,6 +257,18 @@ Status MovieExporter::assembleAudio(const Object* obj,
     return Status::OK;
 }
 
+LayerCamera* MovieExporter::selectedCamera(const Object* obj) const
+{
+    if (mDesc.cameraLayerId >= 0)
+    {
+        return dynamic_cast<LayerCamera*>(obj->findLayerById(mDesc.cameraLayerId));
+    }
+    auto camera = dynamic_cast<LayerCamera*>(obj->findLayerByName(mDesc.strCameraName, Layer::CAMERA));
+    if (camera) { return camera; }
+    auto cameras = obj->getLayersByType<LayerCamera>();
+    return cameras.empty() ? nullptr : cameras.front();
+}
+
 /** Exports obj to a movie image at strOut using FFmpeg.
  *
  *  @param[in]  obj An Object containing the animation to export.
@@ -290,14 +302,10 @@ Status MovieExporter::generateMovie(
     int frameEnd = mDesc.endFrame;
     const QSize exportSize = mDesc.exportSize;
     bool transparency = mDesc.alpha;
-    QString strCameraName = mDesc.strCameraName;
     bool loop = mDesc.loop;
 
-    auto cameraLayer = static_cast<LayerCamera*>(obj->findLayerByName(strCameraName, Layer::CAMERA));
-    if (cameraLayer == nullptr)
-    {
-        cameraLayer = obj->getLayersByType< LayerCamera >().front();
-    }
+    auto cameraLayer = selectedCamera(obj);
+    if (cameraLayer == nullptr) { return Status::INVALID_ARGUMENT; }
     int currentFrame = frameStart;
 
     /* We create an image with the correct dimensions and background
@@ -325,7 +333,8 @@ Status MovieExporter::generateMovie(
      * frameWindow variable which is designed to take up a maximum of
      * about 1GB of memory
      */
-    int frameWindow = static_cast<int>(1e9 / (camSize.width() * camSize.height() * 4.0));
+    const qint64 frameBytes = qint64(exportSize.width())*exportSize.height()*4;
+    int frameWindow = qMax(1, static_cast<int>(1000000000 / frameBytes));
 
     // Build FFmpeg command
 
@@ -443,15 +452,11 @@ Status MovieExporter::generateGif(
     int frameEnd = mDesc.endFrame;
     const QSize exportSize = mDesc.exportSize;
     bool transparency = false;
-    QString strCameraName = mDesc.strCameraName;
     bool loop = mDesc.loop;
     int bytesWritten;
 
-    auto cameraLayer = static_cast<LayerCamera*>(obj->findLayerByName(strCameraName, Layer::CAMERA));
-    if (cameraLayer == nullptr)
-    {
-        cameraLayer = obj->getLayersByType< LayerCamera >().front();
-    }
+    auto cameraLayer = selectedCamera(obj);
+    if (cameraLayer == nullptr) { return Status::INVALID_ARGUMENT; }
     int currentFrame = frameStart;
 
     /* We create an image with the correct dimensions and background
@@ -765,7 +770,9 @@ Status MovieExporter::checkInputParameters(const ExportMovieDesc& desc)
     b &= (desc.startFrame > 0);
     b &= (desc.endFrame >= desc.startFrame);
     b &= (desc.fps > 0);
-    b &= (!desc.strCameraName.isEmpty());
+    b &= (desc.cameraLayerId >= 0 || !desc.strCameraName.isEmpty());
+    b &= (desc.exportSize.width() > 0 && desc.exportSize.height() > 0);
+    b &= (qint64(desc.exportSize.width())*desc.exportSize.height() <= 250000000);
 
     return b ? Status::OK : Status::INVALID_ARGUMENT;
 }

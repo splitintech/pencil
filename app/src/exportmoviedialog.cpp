@@ -49,16 +49,19 @@ ExportMovieDialog::~ExportMovieDialog()
     delete ui;
 }
 
-void ExportMovieDialog::setCamerasInfo(const std::vector<std::pair<QString, QSize>> camerasInfo)
+void ExportMovieDialog::setCamerasInfo(const std::vector<std::pair<QString, QSize>> camerasInfo, const std::vector<int>& cameraIds)
 {
     if ( ui->cameraCombo->count() > 0 )
     {
         ui->cameraCombo->clear();
     }
 
-	for (const std::pair<QString, QSize>& camera : camerasInfo)
+    int index = 0;
+    for (const std::pair<QString, QSize>& camera : camerasInfo)
     {
-        ui->cameraCombo->addItem( camera.first, camera.second );
+        ui->cameraCombo->addItem(camera.first, camera.second);
+        if (index < static_cast<int>(cameraIds.size())) { ui->cameraCombo->setItemData(index, cameraIds[index], Qt::UserRole+1); }
+        ++index;
     }
 
     auto indexChanged = static_cast< void(QComboBox::*)( int i ) >( &QComboBox::currentIndexChanged );
@@ -96,6 +99,12 @@ void ExportMovieDialog::setDefaultRange(int startFrame, int endFrame, int endFra
 QString ExportMovieDialog::getSelectedCameraName()
 {
     return ui->cameraCombo->currentText();
+}
+
+int ExportMovieDialog::getSelectedCameraId() const
+{
+    auto id = ui->cameraCombo->currentData(Qt::UserRole+1);
+    return id.isValid() ? id.toInt() : -1;
 }
 
 QSize ExportMovieDialog::getExportSize()

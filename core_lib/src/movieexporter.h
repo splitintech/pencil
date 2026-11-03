@@ -26,6 +26,7 @@ GNU General Public License for more details.
 
 class Object;
 class QProcess;
+class LayerCamera;
 
 struct ExportMovieDesc
 {
@@ -36,6 +37,7 @@ struct ExportMovieDesc
     int     fps = 12;
     QSize   exportSize{ 0, 0 };
     QString strCameraName;
+    int cameraLayerId = -1;
     bool loop = false;
     bool alpha = false;
 };
@@ -61,6 +63,7 @@ public:
 
     static Status executeFFmpeg(const QString& cmd, const QStringList& args, std::function<bool(int)> progress);
 private:
+    LayerCamera* selectedCamera(const Object* obj) const;
     Status assembleAudio(const Object* obj, QString ffmpegPath, std::function<void(float)> progress);
     Status generateMovie(const Object *obj, QString ffmpegPath, QString strOutputFile, std::function<void(float)> progress);
     Status generateGif(const Object *obj, QString ffmpeg, QString strOut, std::function<void(float)>  progress);

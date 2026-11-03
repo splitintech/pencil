@@ -72,16 +72,25 @@ bool CommandLineExporter::process(const QString &inputPath,
     LayerCamera *cameraLayer = nullptr;
     if (!camera.isEmpty())
     {
-        cameraLayer = dynamic_cast<LayerCamera*>(layerManager->findLayerByName(camera, Layer::CAMERA));
-        if (cameraLayer == nullptr)
+        int matches = 0;
+        for (auto candidate : mEditor->object()->getLayersByType<LayerCamera>())
         {
-            mErr << tr("Warning: the specified camera layer %1 was not found, ignoring.").arg(camera) << qEndl;
+            if (candidate->name() == camera) { cameraLayer = candidate; ++matches; }
+        }
+        if (matches != 1)
+        {
+            mErr << tr("Error: the specified camera layer %1 is missing or ambiguous.").arg(camera) << qEndl;
+            return false;
         }
     }
     if (cameraLayer == nullptr)
     {
         cameraLayer = dynamic_cast<LayerCamera*>(layerManager->getLastCameraLayer());
-        Q_ASSERT(cameraLayer);
+    }
+    if (cameraLayer == nullptr)
+    {
+        mErr << tr("Error: No camera layer is available.") << qEndl;
+        return false;
     }
 
     if (width < 0)
@@ -94,36 +103,48 @@ bool CommandLineExporter::process(const QString &inputPath,
     }
     QSize exportSize(width, height);
 
-    Q_ASSERT(startFrame >= 1);
+    if (width <= 0 || height <= 0 || qint64(width)*height > 250000000 || startFrame < 1 || outputPaths.isEmpty())
+    {
+        mErr << tr("Error: Invalid export dimensions, range or destinations.") << qEndl;
+        return false;
+    }
     if (endFrame < 0)
     {
         endFrame = layerManager->animationLength(endFrame < -1);
     }
 
-    Q_ASSERT(!outputPaths.empty());
+    if (endFrame < startFrame)
+    {
+        mErr << tr("Error: The last export frame precedes the first frame.") << qEndl;
+        return false;
+    }
     for (const QString& outputPath : outputPaths)
     {
         // Detect format
         QString format = detectFormatByFileNameExtension(outputPath);
         if (format.isNull())
         {
-            mErr << tr("Warning: Output format is not specified or unsupported. Using PNG.", "Command line warning") << qEndl;
+            if (!QFileInfo(outputPath).suffix().isEmpty())
+            {
+                mErr << tr("Error: The specified output format is unsupported.") << qEndl;
+                return false;
+            }
             format = "PNG";
         }
 
         if (isMovieFormat(format))
         {
-            exportMovie(outputPath, cameraLayer, exportSize, startFrame, endFrame, transparency);
+            if (!exportMovie(outputPath, cameraLayer, exportSize, startFrame, endFrame, transparency)) { return false; }
             continue;
         }
 
-        exportImageSequence(outputPath, format, cameraLayer, exportSize, startFrame, endFrame, transparency);
+        if (!exportImageSequence(outputPath, format, cameraLayer, exportSize, startFrame, endFrame, transparency)) { return false; }
     }
 
     return true;
 }
 
-void CommandLineExporter::exportMovie(const QString &outputPath,
+bool CommandLineExporter::exportMovie(const QString &outputPath,
                                       const LayerCamera *cameraLayer,
                                       const QSize &exportSize,
                                       int startFrame,
@@ -132,7 +153,8 @@ void CommandLineExporter::exportMovie(const QString &outputPath,
 {
     if (transparency)
     {
-        mErr << tr("Warning: Transparency is not currently supported in movie files", "Command line warning") << qEndl;
+        mErr << tr("Error: Transparency is not currently supported in command-line movie exports.") << qEndl;
+        return false;
     }
 
     mOut << tr("Exporting movie...", "Command line task progress") << qEndl;
@@ -144,13 +166,16 @@ void CommandLineExporter::exportMovie(const QString &outputPath,
     desc.fps = mEditor->playback()->fps();
     desc.exportSize = exportSize;
     desc.strCameraName = cameraLayer->name();
+    desc.cameraLayerId = cameraLayer->id();
 
     MovieExporter ex;
-    ex.run(mEditor->object(), desc, [](float, float){}, [](float){}, [](const QString &){});
+    auto status = ex.run(mEditor->object(), desc, [](float, float){}, [](float){}, [](const QString &){});
+    if (!status.ok()) { mErr << status.title() << qEndl << status.description() << qEndl; return false; }
     mOut << tr("Done.", "Command line task done") << qEndl;
+    return true;
 }
 
-void CommandLineExporter::exportImageSequence(const QString &outputPath,
+bool CommandLineExporter::exportImageSequence(const QString &outputPath,
                                               const QString &format,
                                               const LayerCamera *cameraLayer,
                                               const QSize &exportSize,
@@ -159,7 +184,7 @@ void CommandLineExporter::exportImageSequence(const QString &outputPath,
                                               bool transparency)
 {
     mOut << tr("Exporting image sequence...", "Command line task progress") << qEndl;
-    mEditor->object()->exportFrames(startFrame,
+    auto status = mEditor->object()->exportFrames(startFrame,
                                     endFrame,
                                     cameraLayer,
                                     exportSize,
@@ -171,5 +196,7 @@ void CommandLineExporter::exportImageSequence(const QString &outputPath,
                                     true,
                                     nullptr,
                                     0);
+    if (!status.ok()) { mErr << status.title() << qEndl << status.description() << qEndl; return false; }
     mOut << tr("Done.", "Command line task done") << qEndl;
+    return true;
 }

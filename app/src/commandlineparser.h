@@ -27,7 +27,7 @@ class CommandLineParser : QObject
 public:
     explicit CommandLineParser();
 
-    void process(QStringList arguments);
+    bool process(QStringList arguments);
 
     QString inputPath() const { return mInputPath; }
     QStringList outputPaths() const { return mOutputPaths; }

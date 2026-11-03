@@ -293,29 +293,19 @@ Status ActionCommands::exportMovie(bool isGif)
 
     dialog->init();
 
-    std::vector< std::pair<QString, QSize> > camerasInfo;
-    auto cameraLayers = mEditor->object()->getLayersByType< LayerCamera >();
-    for (LayerCamera* i : cameraLayers)
+    auto cameraLayers = mEditor->object()->getLayersByType<LayerCamera>();
+    auto current = static_cast<LayerCamera*>(mEditor->layers()->currentLayer()->type() == Layer::CAMERA
+        ? mEditor->layers()->currentLayer() : nullptr);
+    auto chosen = std::find(cameraLayers.begin(), cameraLayers.end(), current);
+    if (chosen != cameraLayers.end()) { std::iter_swap(cameraLayers.begin(), chosen); }
+    std::vector<std::pair<QString, QSize>> camerasInfo;
+    std::vector<int> cameraIds;
+    for (auto camera : cameraLayers)
     {
-        camerasInfo.push_back(std::make_pair(i->name(), i->getViewSize()));
+        camerasInfo.emplace_back(camera->name(), camera->getViewSize());
+        cameraIds.push_back(camera->id());
     }
-
-    auto currLayer = mEditor->layers()->currentLayer();
-    if (currLayer->type() == Layer::CAMERA)
-    {
-        QString strName = currLayer->name();
-        auto it = std::find_if(camerasInfo.begin(), camerasInfo.end(),
-            [strName](std::pair<QString, QSize> p)
-        {
-            return p.first == strName;
-        });
-
-        Q_ASSERT(it != camerasInfo.end());
-
-        std::swap(camerasInfo[0], *it);
-    }
-
-    dialog->setCamerasInfo(camerasInfo);
+    dialog->setCamerasInfo(camerasInfo, cameraIds);
 
     int lengthWithSounds = mEditor->layers()->animationLength(true);
     int length = mEditor->layers()->animationLength(false);
@@ -336,6 +326,7 @@ Status ActionCommands::exportMovie(bool isGif)
     desc.fps = mEditor->playback()->fps();
     desc.exportSize = dialog->getExportSize();
     desc.strCameraName = dialog->getSelectedCameraName();
+    desc.cameraLayerId = dialog->getSelectedCameraId();
     desc.loop = dialog->getLoop();
     desc.alpha = dialog->getTransparency();
 

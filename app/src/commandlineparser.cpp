@@ -79,9 +79,8 @@ CommandLineParser::CommandLineParser() : mParser(), mInputPath(), mOutputPaths()
     mParser.addOption(transparencyOption);
 }
 
-void CommandLineParser::process(QStringList arguments)
+bool CommandLineParser::process(QStringList arguments)
 {
-    QTextStream out(stdout);
     QTextStream err(stderr);
 
     arguments.removeOne("-NSDocumentRevisionsDebugMode");
@@ -96,72 +95,46 @@ void CommandLineParser::process(QStringList arguments)
 
     mOutputPaths << mParser.values("export") << mParser.values("export-sequence");
 
-    if (!mParser.value("width").isEmpty())
+    // Explicit invalid options must not silently select another export contract.
+    for (const auto& option : {QStringLiteral("width"), QStringLiteral("height"), QStringLiteral("start")})
     {
+        if (!mParser.isSet(option)) { continue; }
         bool ok = false;
-        mWidth = mParser.value("width").toInt(&ok);
-        if (!ok)
+        int value = mParser.value(option).toInt(&ok);
+        if (!ok || value < 1)
         {
-            err << tr("Warning: width value %1 is not an integer, ignoring.").arg(mParser.value("width")) << qEndl;
-            mWidth = -1;
+            err << tr("Error: %1 must be a positive integer.").arg(option) << qEndl;
+            return false;
         }
+        if (option == "width") { mWidth = value; }
+        else if (option == "height") { mHeight = value; }
+        else { mStartFrame = value; }
     }
 
-    if (!mParser.value("height").isEmpty())
+    if (mParser.isSet("end"))
     {
-        bool ok = false;
-        mHeight = mParser.value("height").toInt(&ok);
-        if (!ok)
-        {
-            err << tr("Warning: height value %1 is not an integer, ignoring.").arg(mParser.value("height")) << qEndl;
-            mHeight = -1;
-        }
-    }
-
-    if (!mParser.value("start").isEmpty())
-    {
-        bool ok = false;
-        mStartFrame = mParser.value("start").toInt(&ok);
-        if (!ok)
-        {
-            err << tr("Warning: start value %1 is not an integer, ignoring.").arg(mParser.value("start")) << qEndl;
-            mStartFrame = 1;
-        }
-        if (mStartFrame < 1)
-        {
-            err << tr("Warning: start value must be at least 1, ignoring.") << qEndl;
-            mStartFrame = 1;
-        }
-    }
-
-    if (!mParser.value("end").isEmpty())
-    {
-        if (mParser.value("end") == "last")
-        {
-            mEndFrame = -1;
-        }
-        else if (mParser.value("end") == "last-sound")
-        {
-            mEndFrame = -2;
-        }
+        const QString value = mParser.value("end");
+        if (value == "last") { mEndFrame = -1; }
+        else if (value == "last-sound") { mEndFrame = -2; }
         else
         {
             bool ok = false;
-            mEndFrame = mParser.value("end").toInt(&ok);
-            if (!ok)
+            mEndFrame = value.toInt(&ok);
+            if (!ok || mEndFrame < mStartFrame)
             {
-                err << tr("Warning: end value %1 is not an integer, last or last-sound, ignoring.").arg(mParser.value("end")) << qEndl;
-                mEndFrame = -1;
+                err << tr("Error: end must be last, last-sound or an integer at least as large as start.") << qEndl;
+                return false;
             }
         }
-        if (mEndFrame > -1 && mEndFrame < mStartFrame)
-        {
-            err << tr("Warning: end value %1 is smaller than start value %2, ignoring.").arg(mEndFrame).arg(mStartFrame) << qEndl;
-            mEndFrame = mStartFrame;
-        }
+    }
+    if (mParser.isSet("camera") && mParser.value("camera").isEmpty())
+    {
+        err << tr("Error: The camera name must not be empty.") << qEndl;
+        return false;
     }
 
     mTransparency = mParser.isSet("transparency");
 
     mCamera = mParser.value("camera");
+    return true;
 }

@@ -34,12 +34,13 @@ public:
     explicit ExportMovieDialog(QWidget* parent, Mode mode, FileType fileType);
     ~ExportMovieDialog();
 
-    void setCamerasInfo(const std::vector<std::pair<QString, QSize>>);
+    void setCamerasInfo(const std::vector<std::pair<QString, QSize>>, const std::vector<int>& cameraIds = {});
     void updateResolutionCombo( int index );
 
     void setDefaultRange( int startFrame, int endFrame, int endFrameWithSounds );
 
     QString getSelectedCameraName();
+    int getSelectedCameraId() const;
     QSize getExportSize();
     bool getTransparency() const;
 
