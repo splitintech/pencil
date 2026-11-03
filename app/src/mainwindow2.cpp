@@ -662,6 +662,15 @@ void MainWindow2::viewFlipped()
     ui->actionVertical_Flip->setChecked(mEditor->view()->isFlipVertical());
 }
 
+#ifdef STANLEE_AUTOMATION
+void MainWindow2::closeForAutomation()
+{
+    mAutomationCloseAuthorized = true;
+    close();
+    mAutomationCloseAuthorized = false;
+}
+#endif
+
 void MainWindow2::closeEvent(QCloseEvent* event)
 {
     if (m2ndCloseEvent)
@@ -671,7 +680,11 @@ void MainWindow2::closeEvent(QCloseEvent* event)
         return;
     }
 
+#ifdef STANLEE_AUTOMATION
+    if (!mAutomationCloseAuthorized && !maybeSave())
+#else
     if (!maybeSave())
+#endif
     {
         event->ignore();
         return;

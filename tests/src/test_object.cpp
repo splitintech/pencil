@@ -420,3 +420,22 @@ TEST_CASE("Snapshots own sound asset bytes and retain native timing")
         REQUIRE(copied.readAll() == "opaque sound asset fixture");
     }
 }
+
+TEST_CASE("Imported assets have independent lifetime filenames")
+{
+    QTemporaryDir directory;
+    REQUIRE(directory.isValid());
+    QFile source(directory.filePath("sound.wav"));
+    REQUIRE(source.open(QIODevice::WriteOnly));
+    REQUIRE(source.write("independent sound bytes") > 0);
+    source.close();
+    Object object;
+    object.init();
+    QString first = object.copyFileToDataFolder(source.fileName());
+    QString second = object.copyFileToDataFolder(source.fileName());
+    REQUIRE_FALSE(first.isEmpty());
+    REQUIRE_FALSE(second.isEmpty());
+    REQUIRE(first != second);
+    REQUIRE(QFile::exists(first));
+    REQUIRE(QFile::exists(second));
+}

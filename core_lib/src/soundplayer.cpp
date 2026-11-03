@@ -40,6 +40,7 @@ void SoundPlayer::init(SoundClip* clip)
     mSoundClip = clip;
 
     mMediaPlayer = new QMediaPlayer(this);
+    makeConnections();
 
     QFile file(clip->fileName());
     file.open(QIODevice::ReadOnly);
@@ -53,8 +54,6 @@ void SoundPlayer::init(SoundClip* clip)
 #else
     mMediaPlayer->setMedia(QUrl::fromLocalFile(clip->fileName()), &mBuffer);
 #endif
-    makeConnections();
-
     clip->attachPlayer(this);
 }
 

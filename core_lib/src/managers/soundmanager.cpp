@@ -83,9 +83,7 @@ Status SoundManager::loadSound(SoundClip* soundClip, QString strSoundFile)
     }
 
     QString strCopyFile = editor()->object()->copyFileToDataFolder(strSoundFile);
-    Q_ASSERT(!strCopyFile.isEmpty());
-
-    soundClip->init(strCopyFile);
+    if (strCopyFile.isEmpty() || !soundClip->init(strCopyFile).ok()) { return Status::FAIL; }
     if (soundClip->soundClipName().isEmpty())
     {
         soundClip->setSoundClipName(QFileInfo(strSoundFile).fileName());
@@ -94,7 +92,6 @@ Status SoundManager::loadSound(SoundClip* soundClip, QString strSoundFile)
     Status st = createMediaPlayer(soundClip);
     if (!st.ok())
     {
-        delete soundClip;
         return st;
     }
 
@@ -143,6 +140,7 @@ int SoundManager::soundClipCount() const
 void SoundManager::onDurationChanged(SoundPlayer* player, int64_t duration)
 {
     SoundClip* clip = player->clip();
+    if (clip->duration() == duration) { return; }
 
     double fps = static_cast<double>(editor()->fps());
 

@@ -15,6 +15,11 @@
 #include "soundclip.h"
 #include "camera.h"
 #include "soundmanager.h"
+#include "colorpalettewidget.h"
+#include "soundplayer.h"
+#include "importimageconfig.h"
+#include <QImageReader>
+#include <QTemporaryDir>
 #include "keyframe.h"
 #include "playbackmanager.h"
 #include "undoredomanager.h"
@@ -340,7 +345,7 @@ void validateBatch(const QJsonObject& args)
         QJsonObject contract;
         for (const auto& candidate : ::operations())
         { if (candidate.toObject().value("id").toString() == id) { contract = candidate.toObject(); break; } }
-        require(id != "edit.batch" && contract.value("undo").toString() == "native_document_transaction",
+        require(id != "edit.batch" && contract.value("undo").toString() == "native_document_transaction" && contract.value("atomic") != QJsonValue(false),
                 "unsupported_atomic_operation", "Batch accepts undoable document edits only");
         validate(step.value("arguments").toObject(), contract.value("input").toObject());
         if (id == "canvas.stroke") { samples += step.value("arguments").toObject().value("points").toArray().size(); }
@@ -371,6 +376,7 @@ AutomationBridge::AutomationBridge(MainWindow2* window) : QObject(window), mWind
     connect(mEditor->view(), &ViewManager::viewChanged, this, [this] { changed("view"); });
     connect(mEditor->getScribbleArea(), &ScribbleArea::selectionUpdated, this, [this] { changed("selection"); });
     connect(mEditor->playback(), &PlaybackManager::playStateChanged, this, [this] { changed("playback"); });
+    connect(mEditor->sound(), &SoundManager::soundClipDurationChanged, this, [this] { changed("sound_duration"); });
 }
 
 AutomationBridge::~AutomationBridge() { stop(); }
@@ -478,6 +484,20 @@ void AutomationBridge::receive(QLocalSocket* socket)
         // emitted. Do not abort this socket before the caller gets its result.
         connect(socket, &QLocalSocket::disconnected, this, &AutomationBridge::stop);
     }
+    if (mCloseAfterResponse)
+    {
+        mCloseAfterResponse = false; mClosing = true;
+        auto snapshot = mEditor->snapshot();
+        auto signature = snapshot ? snapshot->contentSignature() : QByteArray();
+        auto revision = mRevision;
+        connect(socket, &QLocalSocket::disconnected, this, [this, revision, signature] {
+            auto current = mEditor->snapshot();
+            if (signature.isEmpty() || !current || current->contentSignature() != signature || mRevision != revision ||
+                QApplication::activeModalWidget() || mEditor->getScribbleArea()->isPointerInUse())
+            { mClosing = false; changed("close_cancelled", false); return; }
+            stop(); mWindow->closeForAutomation(); QCoreApplication::quit();
+        });
+    }
     socket->disconnectFromServer();
 }
 
@@ -500,14 +520,14 @@ QJsonObject AutomationBridge::dispatch(const QJsonObject& request)
             // bridge is attached. That never expands the automation grant.
             grantedPath(mEditor->object()->filePath(), false);
         }
-        require(!mExecuting, "busy", "Another native operation is active");
+        require(!mExecuting && !mClosing, "busy", "Another native operation is active");
         if (writes)
         {
             require(request.value("document_id").toString() == mDocumentId, "invalid_document", "Document was replaced or reopened");
             require(request.value("expected_revision").isDouble() && request.value("expected_revision").toDouble() == mRevision,
                     "stale_revision", "Document changed; inspect and retry with the current revision");
             require(!QApplication::activeModalWidget() && !mEditor->getScribbleArea()->isPointerInUse()
-                    && !mEditor->tools()->currentTool()->isActive() && !mEditor->playback()->isPlaying(),
+                    && !mEditor->tools()->currentTool()->isActive() && (!mEditor->playback()->isPlaying() || (op == "playback.set" && !request.value("arguments").toObject().value("playing").toBool())),
                     "busy", "A human tool, playback or modal operation is active");
         }
         require(request.value("arguments").isObject(), "invalid_arguments", "Arguments must be an object");
@@ -592,6 +612,13 @@ QJsonObject AutomationBridge::state() const
             QJsonObject frame {{"frame", key->pos()}, {"length", key->length()}, {"selected", layer->isFrameSelected(key->pos())}};
             if (layer->type() == Layer::BITMAP) { frame.insert("opacity", static_cast<BitmapImage*>(key)->getOpacity()); }
             if (layer->type() == Layer::VECTOR) { frame.insert("opacity", static_cast<VectorImage*>(key)->getOpacity()); }
+            if (layer->type() == Layer::SOUND)
+            {
+                auto clip = static_cast<SoundClip*>(key);
+                frame.insert("name", clip->soundClipName()); frame.insert("duration_ms", static_cast<double>(clip->duration()));
+                frame.insert("duration_pending", clip->duration() == 0);
+                frame.insert("playable", clip->player() && clip->player()->isValid());
+            }
             if (layer->type() == Layer::CAMERA)
             {
                 auto camera = static_cast<Camera*>(key);
@@ -616,6 +643,8 @@ QJsonObject AutomationBridge::state() const
         {"frame", mEditor->currentFrame()}, {"layer_index", mEditor->currentLayerIndex()}, {"fps", mEditor->fps()},
         {"layers", layers}, {"tool", static_cast<int>(mEditor->tools()->currentTool()->type())},
         {"event_sequence", static_cast<double>(mEventSequence)},
+        {"playback", QJsonObject {{"playing", mEditor->playback()->isPlaying()}, {"loop", mEditor->playback()->isLooping()},
+             {"ranged", mEditor->playback()->isRangedPlaybackOn()}, {"start", mEditor->playback()->markInFrame()}, {"end", mEditor->playback()->markOutFrame()}}},
         {"history", QJsonObject {{"can_undo", mEditor->undoRedo()->canUndo()}, {"can_redo", mEditor->undoRedo()->canRedo()}}}};
 }
 
@@ -627,6 +656,64 @@ QJsonObject AutomationBridge::execute(const QString& op, const QJsonObject& args
         for (const auto& item : ::operations()) { operations.append(item.toObject().value("id")); }
         return {{"protocol_version", 1}, {"application_version", QCoreApplication::applicationVersion()},
             {"operations", operations}, {"workspaces", QJsonArray::fromStringList(mWorkspaces)}, {"qualified_alpha", false}};
+    }
+    if (op == "view.inspect")
+    {
+        auto view = mEditor->view(); auto at = view->translation();
+        return {{"scale", view->scaling()}, {"rotation", view->rotation()}, {"x", at.x()}, {"y", at.y()},
+            {"flip_horizontal", view->isFlipHorizontal()}, {"flip_vertical", view->isFlipVertical()}};
+    }
+    if (op == "vector.inspect")
+    {
+        int index = integer(args, "index", 0, mEditor->layers()->count()-1);
+        auto layer = dynamic_cast<LayerVector*>(mEditor->object()->getLayer(index));
+        int frame = integer(args, "frame", 1, 1000000);
+        require(layer && layer->keyExists(frame), "invalid_context", "An exact vector key is required");
+        auto image = layer->getVectorImageAtFrame(frame);
+        int count = image->isEmpty() ? 0 : image->getLastCurveNumber()+1;
+        int offset = args.value("offset").toInt(), limit = args.value("limit").toInt(16);
+        int vertexOffset = args.value("vertex_offset").toInt(), vertexLimit = args.value("vertex_limit").toInt(64);
+        require(limit*vertexLimit <= 4096, "invalid_arguments", "Vector inspection exceeds 4096 segments per response");
+        QJsonArray curves;
+        for (int i = offset; i < qMin(count, offset+limit); ++i)
+        {
+            auto& curve = image->curve(i); QJsonArray segments;
+            for (int j = vertexOffset; j < qMin(curve.getVertexSize(), vertexOffset+vertexLimit); ++j)
+            {
+                auto at = curve.getVertex(j), c1 = curve.getC1(j), c2 = curve.getC2(j);
+                segments.append(QJsonObject {{"vertex", j}, {"x", at.x()}, {"y", at.y()}, {"c1x", c1.x()}, {"c1y", c1.y()},
+                    {"c2x", c2.x()}, {"c2y", c2.y()}, {"pressure", curve.getPressure(j+1)}, {"selected", curve.isSelected(j)}});
+            }
+            auto origin = curve.getOrigin();
+            curves.append(QJsonObject {{"curve", i}, {"origin", QJsonObject {{"x", origin.x()}, {"y", origin.y()}, {"pressure", curve.getPressure(0)}}},
+                {"segment_count", curve.getVertexSize()}, {"segments", segments}, {"width", curve.getWidth()}, {"feather", curve.getFeather()},
+                {"color_index", curve.getColorNumber()}, {"variable_width", curve.getVariableWidth()}, {"invisible", curve.isInvisible()}, {"selected", curve.isSelected()}});
+        }
+        return {{"index", index}, {"frame", frame}, {"curve_count", count}, {"area_count", image->mArea.size()},
+            {"offset", offset}, {"curves", curves}, {"next_offset", qMin(count, offset+limit)}};
+    }
+    if (op == "palette.export")
+    {
+        QString path = grantedPath(text(args, "path"), false);
+        require(!QFileInfo::exists(path) || args.value("overwrite").toBool(), "overwrite_required", "Explicit palette overwrite required");
+        QString suffix = QFileInfo(path).suffix().toLower();
+        require(suffix == "gpl" || suffix == "xml", "unsupported_capability", "Palette export supports gpl or xml");
+        QTemporaryDir staging;
+        require(staging.isValid(), "native_failure", "Cannot stage palette export");
+        auto temporary = staging.filePath("palette." + suffix);
+        require(mEditor->object()->exportPalette(temporary), "native_failure", "Native palette export failed");
+        QFile source(temporary); QSaveFile destination(path);
+        require(source.open(QIODevice::ReadOnly) && destination.open(QIODevice::WriteOnly), "native_failure", "Could not open palette publication");
+        auto bytes = source.readAll();
+        require(destination.write(bytes) == bytes.size() && destination.commit(), "native_failure", "Palette publication failed");
+        return {{"path", path}, {"colors", mEditor->object()->getColorCount()}};
+    }
+    if (op == "session.close")
+    {
+        require(!(mEditor->object()->isModified() || mEditor->undoRedo()->hasUnsavedChanges()) || args.value("discard").toBool(),
+                "discard_required", "Closing a dirty document requires explicit discard or a preceding save");
+        mCloseAfterResponse = true;
+        return {{"state", "closing"}};
     }
     if (op == "document.inspect") { return state(); }
     if (op == "edit.batch")
@@ -994,6 +1081,200 @@ QJsonObject AutomationBridge::execute(const QString& op, const QJsonObject& args
         mEditor->view()->forceUpdateViewTransform();
         emit mEditor->framesModified();
     }
+    else if (op.startsWith("vector."))
+    {
+        int index = integer(args, "index", 0, mEditor->layers()->count()-1);
+        auto layer = dynamic_cast<LayerVector*>(mEditor->object()->getLayer(index));
+        int frame = integer(args, "frame", 1, 1000000);
+        require(layer && layer->visible() && layer->keyExists(frame), "invalid_context", "A visible vector layer and exact key are required");
+        mEditor->layers()->setCurrentLayer(index); mEditor->scrubTo(frame);
+        auto image = layer->getVectorImageAtFrame(frame);
+        if (op == "vector.path")
+        {
+            auto origin = args.value("origin").toObject();
+            BezierCurve curve(QList<QPointF> {QPointF(origin.value("x").toDouble(), origin.value("y").toDouble())}, false);
+            curve.setOrigin(curve.getOrigin(), origin.value("pressure").toDouble(1), false);
+            for (const auto& value : args.value("segments").toArray())
+            {
+                auto s = value.toObject();
+                curve.appendCubic(QPointF(s.value("c1x").toDouble(), s.value("c1y").toDouble()),
+                    QPointF(s.value("c2x").toDouble(), s.value("c2y").toDouble()),
+                    QPointF(s.value("x").toDouble(), s.value("y").toDouble()), s.value("pressure").toDouble(1));
+            }
+            curve.setColorNumber(integer(args, "color_index", 0, mEditor->object()->getColorCount()-1));
+            curve.setWidth(args.value("width").toDouble()); curve.setFeather(args.value("feather").toDouble());
+            curve.setVariableWidth(args.value("variable_width").toBool()); curve.setInvisibility(args.value("invisible").toBool());
+            image->addCurve(curve, 1.0, false);
+        }
+        else if (op == "vector.geometry")
+        {
+            int count = image->isEmpty() ? 0 : image->getLastCurveNumber()+1;
+            auto& curve = image->curve(integer(args, "curve", 0, count-1));
+            int vertex = integer(args, "vertex", -1, curve.getVertexSize()-1);
+            require(vertex >= 0 || (!args.contains("c1x") && !args.contains("c2x")), "invalid_arguments", "Origin has no preceding control handles");
+            curve.setVertex(vertex, QPointF(args.value("x").toDouble(), args.value("y").toDouble()));
+            if (args.contains("c1x")) { curve.setC1(vertex, QPointF(args.value("c1x").toDouble(), args.value("c1y").toDouble())); }
+            if (args.contains("c2x")) { curve.setC2(vertex, QPointF(args.value("c2x").toDouble(), args.value("c2y").toDouble())); }
+        }
+        else
+        {
+            int count = image->isEmpty() ? 0 : image->getLastCurveNumber()+1;
+            QList<int> selected;
+            for (const auto& value : args.value("curves").toArray())
+            { QJsonObject row {{"curve", value}}; selected.append(integer(row, "curve", 0, count-1)); }
+            image->deselectAll();
+            for (int curve : selected) { image->setSelected(curve, true); }
+            image->calculateSelectionRect();
+            if (op == "vector.select") { mEditor->updateFrame(); return state(); }
+            if (op == "vector.delete") { image->deleteSelection(); }
+            else if (op == "vector.transform")
+            {
+                auto m = args.value("matrix").toArray();
+                QTransform transform(m[0].toDouble(), m[1].toDouble(), m[2].toDouble(), m[3].toDouble(), m[4].toDouble(), m[5].toDouble());
+                require(transform.isInvertible(), "invalid_arguments", "Vector transform must be invertible");
+                image->applySelectionTransformation(transform);
+            }
+            else if (op == "vector.fill")
+            {
+                int color = integer(args, "color_index", 0, mEditor->object()->getColorCount()-1);
+                int before = image->mArea.size(); image->fillSelectedPath(color);
+                require(image->mArea.size() > before, "invalid_context", "Selected curves do not form a fillable native path");
+            }
+            else if (op == "vector.style")
+            {
+                require(args.size() > 3, "invalid_arguments", "Provide at least one native style property");
+                if (args.contains("color_index")) { image->applyColorToSelectedCurve(integer(args, "color_index", 0, mEditor->object()->getColorCount()-1)); }
+                if (args.contains("width")) { image->applyWidthToSelection(args.value("width").toDouble()); }
+                if (args.contains("feather")) { image->applyFeatherToSelection(args.value("feather").toDouble()); }
+                if (args.contains("variable_width")) { image->applyVariableWidthToSelection(args.value("variable_width").toBool()); }
+                if (args.contains("invisible")) { image->applyInvisibilityToSelection(args.value("invisible").toBool()); }
+            }
+        }
+        image->calculateSelectionRect(); image->modification();
+        mEditor->object()->modification(); emit mEditor->framesModified();
+    }
+    else if (op == "content.clear")
+    {
+        int index = integer(args, "index", 0, mEditor->layers()->count()-1);
+        auto layer = mEditor->object()->getLayer(index);
+        require(layer->visible() && layer->isPaintable(), "invalid_context", "Clear requires visible bitmap or vector content");
+        mEditor->layers()->setCurrentLayer(index);
+        for (const auto& value : args.value("frames").toArray())
+        {
+            auto key = layer->getKeyFrameAt(value.toInt());
+            require(key, "invalid_selection", "Clear requires exact keys");
+            if (layer->type() == Layer::BITMAP) { static_cast<BitmapImage*>(key)->clear(); }
+            else { static_cast<VectorImage*>(key)->clear(); }
+            key->modification();
+        }
+        mEditor->object()->modification(); emit mEditor->framesModified();
+    }
+    else if (op.startsWith("palette."))
+    {
+        auto object = mEditor->object();
+        if (op == "palette.add")
+        {
+            QColor color(text(args, "color")); require(color.isValid(), "invalid_arguments", "Invalid palette color");
+            require(object->getColorCount() < 4096, "invalid_context", "Palette size exceeds budget");
+            object->addColor(ColorRef(color, text(args, "name")));
+        }
+        else if (op == "palette.import")
+        {
+            QString path = grantedPath(text(args, "path"), true);
+            require(QFileInfo(path).size() <= 1024*1024, "invalid_arguments", "Palette file exceeds 1 MiB");
+            Object colors;
+            require(colors.importPalette(path) && colors.getColorCount() > 0 && colors.getColorCount() <= 4096, "invalid_document", "Native palette import failed or exceeds budget");
+            if (args.value("replace").toBool())
+            {
+                require(object->getColorCount() <= colors.getColorCount(), "invalid_context", "Replacement must retain existing vector color indices");
+                int original = object->getColorCount();
+                for (int i = 0; i < original; ++i) { object->setColorRef(i, colors.getColor(i)); }
+                for (int i = original; i < colors.getColorCount(); ++i) { object->addColor(colors.getColor(i)); }
+            }
+            else
+            {
+                require(object->getColorCount()+colors.getColorCount() <= 4096, "invalid_context", "Palette size exceeds budget");
+                for (int i = 0; i < colors.getColorCount(); ++i) { object->addColor(colors.getColor(i)); }
+            }
+        }
+        else
+        {
+            int index = integer(args, "index", 0, object->getColorCount()-1);
+            if (op == "palette.update")
+            {
+                require(args.contains("color") || args.contains("name"), "invalid_arguments", "Provide palette color or name");
+                if (args.contains("color")) { QColor color(text(args, "color")); require(color.isValid(), "invalid_arguments", "Invalid palette color"); object->setColor(index, color); }
+                if (args.contains("name")) { object->renameColor(index, text(args, "name")); }
+            }
+            else if (op == "palette.remove")
+            { require(object->getColorCount() > 1 && !object->isColorInUse(index), "invalid_context", "A palette must retain one color and used vector colors cannot be removed"); object->removeColor(index); }
+            else if (op == "palette.move")
+            { object->movePaletteColor(index, integer(args, "target", 0, object->getColorCount()-1)); object->moveVectorColor(index, args.value("target").toInt()); }
+        }
+        object->modification();
+        mEditor->color()->setColorNumber(qBound(0, mEditor->color()->frontColorNumber(), object->getColorCount()-1));
+        if (auto palette = mWindow->findChild<ColorPaletteWidget*>()) { palette->refreshColorList(); }
+        emit mEditor->framesModified();
+    }
+    else if (op == "audio.import" || op == "audio.update")
+    {
+        int index = integer(args, "index", 0, mEditor->layers()->count()-1);
+        auto layer = dynamic_cast<LayerSound*>(mEditor->object()->getLayer(index));
+        require(layer && layer->visible(), "invalid_context", "A visible sound layer is required");
+        int frame = integer(args, "frame", 1, 1000000);
+        mEditor->layers()->setCurrentLayer(index);
+        if (op == "audio.import")
+        {
+            auto path = grantedPath(text(args, "path"), true);
+            require(QFileInfo(path).size() > 0 && QFileInfo(path).size() <= 64*1024*1024, "invalid_arguments", "Sound asset must be 1 byte to 64 MiB");
+            require(!layer->keyExists(frame) || args.value("overwrite").toBool(), "overwrite_required", "Explicit sound-key overwrite required");
+            std::unique_ptr<SoundClip> clip(new SoundClip);
+            clip->setPos(frame);
+            if (args.contains("name")) { clip->setSoundClipName(text(args, "name")); }
+            require(mEditor->sound()->loadSound(clip.get(), path).ok(), "missing_asset", "Native sound asset import failed");
+            layer->addOrReplaceKeyFrame(frame, clip.release());
+        }
+        else
+        {
+            auto clip = static_cast<SoundClip*>(layer->getKeyFrameAt(frame));
+            require(clip, "invalid_selection", "An exact sound key is required");
+            clip->setSoundClipName(text(args, "name")); clip->modification();
+        }
+        mEditor->object()->modification(); mEditor->layers()->notifyAnimationLengthChanged(); emit mEditor->framesModified();
+    }
+    else if (op == "import.image")
+    {
+        int index = integer(args, "index", 0, mEditor->layers()->count()-1);
+        auto layer = mEditor->object()->getLayer(index);
+        require(layer->visible() && layer->isPaintable(), "invalid_context", "Image import requires a visible paintable layer");
+        auto path = grantedPath(text(args, "path"), true);
+        require(QFileInfo(path).size() <= 32*1024*1024, "invalid_arguments", "Image asset exceeds 32 MiB");
+        if (layer->type() == Layer::BITMAP)
+        {
+            QImageReader reader(path); auto size = reader.size();
+            require(size.isValid() && size.width() <= 8192 && size.height() <= 8192 && qint64(size.width())*size.height() <= 32000000,
+                    "invalid_document", "Image cannot be decoded within the pixel budget");
+        }
+        mEditor->layers()->setCurrentLayer(index); mEditor->scrubTo(integer(args, "frame", 1, 1000000));
+        ImportImageConfig config; config.importFrame = mEditor->currentFrame();
+        config.positionType = static_cast<ImportImageConfig::PositionType>(args.value("position").toInt(1));
+        require(mEditor->importImage(path, config).ok(), "invalid_document", "Native image import failed");
+        mEditor->object()->modification(); emit mEditor->framesModified();
+    }
+    else if (op == "project.playback")
+    {
+        int start = integer(args, "start", 1, 1000000), end = integer(args, "end", start, 1000000);
+        auto playback = mEditor->playback();
+        playback->setRangedStartFrame(start); playback->setRangedEndFrame(end);
+        playback->setLooping(args.value("loop").toBool()); playback->enableRangedPlayback(args.value("ranged").toBool());
+        mEditor->object()->modification(); emit mEditor->framesModified();
+    }
+    else if (op == "playback.set")
+    {
+        if (args.contains("sound")) { mEditor->playback()->enableSound(args.value("sound").toBool()); }
+        if (args.value("playing").toBool()) { mEditor->playback()->play(); }
+        else { mEditor->playback()->stop(); }
+    }
     else if (op == "timeline.scrub") { mEditor->scrubTo(integer(args, "frame", 1, 1000000)); }
     else if (op == "timeline.add_key")
     {
@@ -1094,6 +1375,11 @@ QJsonObject AutomationBridge::execute(const QString& op, const QJsonObject& args
         require(std::isfinite(scale) && scale >= 0.01 && scale <= 100 && std::isfinite(rotation) && std::abs(rotation) <= 360,
                 "invalid_arguments", "Invalid viewport scale or rotation");
         mEditor->view()->scale(scale); mEditor->view()->rotate(rotation);
+        if (args.value("center").toBool()) { mEditor->view()->centerView(); }
+        if (args.contains("x") || args.contains("y"))
+        { auto at = mEditor->view()->translation(); mEditor->view()->translate(args.value("x").toDouble(at.x()), args.value("y").toDouble(at.y())); }
+        if (args.contains("flip_horizontal")) { mEditor->view()->flipHorizontal(args.value("flip_horizontal").toBool()); }
+        if (args.contains("flip_vertical")) { mEditor->view()->flipVertical(args.value("flip_vertical").toBool()); }
     }
     else { throw Failure("unsupported_capability", "Operation is not implemented"); }
     mEditor->updateFrame();

@@ -77,6 +77,9 @@ public slots:
     void viewFlipped();
 
 public:
+#ifdef STANLEE_AUTOMATION
+    void closeForAutomation();
+#endif
     void newDocument();
     void openDocument();
     bool saveDocument();
@@ -190,6 +193,9 @@ private:
     QIcon mStartIcon;
     QIcon mStopIcon;
 
+#ifdef STANLEE_AUTOMATION
+    bool mAutomationCloseAuthorized = false;
+#endif
     // a hack for MacOS because closeEvent fires twice
     bool m2ndCloseEvent = false;
 

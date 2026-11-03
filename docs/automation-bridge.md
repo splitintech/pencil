@@ -46,8 +46,8 @@ directory and copies manager state without marking live history clean.
 `document.snapshot` never temporarily saves the active document under another
 name. An optional FPS override changes only the copy. Native/Python tests check
 source path, dirty state, bitmap backing files, source bytes, preview and undo
-preservation. Checkpoint recovery invalidates old handles and history. Full
-legacy-format, sound and vector qualification remains pending.
+preservation. Checkpoint recovery invalidates old handles and history. Current integration tests cover independent sound assets, vector geometry and
+bitmap import through save/reopen. Full legacy-format qualification remains pending.
 
 Transactions work with both legacy and QUndoStack history. They restore content
 inside the same Object and working directory, preserve native human frame history,
@@ -71,3 +71,20 @@ This integration is not a complete Stanlee alpha and is not ready for upstream
 feature review. See the public build plan and coverage register for release gates.
 
 `tool.inspect` returns native property names, enabled states and limits. `tool.configure` validates all supplied values before applying them and notifying native tool widgets. Stroke samples use native tablet events with pressure and keyboard modifiers on Qt 5 and Qt 6.
+
+
+The content extension advertises 63 operations. Vector paths expose cubic handles,
+pressure, selection, styles, affine transforms, native fill and deletion. Inspection
+is paginated and bounded. Palettes support native XML/GPL import/export and retain
+vector color references. Audio imports copy source bytes into independently named
+assets, report asynchronous decoder timing and support undoable clip names. Image
+imports, exact-key clearing, playback ranges and viewport pan/flips use native
+editor managers. External imports are excluded from atomic batches.
+
+`session.close` requires a clean document or explicit discard. It flushes the IPC
+response before closing and checks for intervening content/revision/tool/modal
+changes. Closing never marks unsaved human history clean. Sound players subscribe
+to metadata before loading, and unchanged duration notifications do not create
+spurious revisions. Local qualification: official Qt 6.12 universal build, 79 native
+cases / 1,175 assertions; controller integration suite 66 passed with one Windows-only
+skip. These results do not establish complete UI coverage or release acceptance.

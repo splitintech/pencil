@@ -28,6 +28,7 @@ GNU General Public License for more details.
 #include <QImageWriter>
 #include <QRegularExpression>
 #include <QCryptographicHash>
+#include <QUuid>
 #include <QXmlStreamWriter>
 
 #include "layer.h"
@@ -951,7 +952,7 @@ QString Object::copyFileToDataFolder(const QString& strFilePath)
     }
 
     QString sNewFileName = "sound_";
-    sNewFileName += QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss_zzz.");
+    sNewFileName += QUuid::createUuid().toString(QUuid::WithoutBraces) + ".";
     sNewFileName += QFileInfo(strFilePath).suffix();
 
     QString destFile = QDir(mDataDirPath).filePath(sNewFileName);
