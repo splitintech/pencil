@@ -155,9 +155,10 @@ void SoundManager::onDurationChanged(SoundPlayer* player, int64_t duration)
 Status SoundManager::createMediaPlayer(SoundClip* clip)
 {
     SoundPlayer* newPlayer = new SoundPlayer();
-    newPlayer->init(clip);
-
+    // Some backends resolve metadata synchronously while setSourceDevice runs.
+    // Subscribe before init so that the first duration is never lost.
     connect(newPlayer, &SoundPlayer::durationChanged, this, &SoundManager::onDurationChanged);
+    newPlayer->init(clip);
 
     return Status::OK;
 }
