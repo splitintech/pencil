@@ -646,7 +646,7 @@ void AutomationBridge::reconcileContent()
         mEditor->object()->modification();
         return;
     }
-    if (!mContentSignature.isEmpty() && signature != mContentSignature)
+    if (signature != mContentSignature)
     {
         // Existing signals may already have invalidated the previous revision.
         if (mRevision == mContentRevision)
