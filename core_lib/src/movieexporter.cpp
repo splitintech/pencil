@@ -350,9 +350,12 @@ Status MovieExporter::generateMovie(
         args << "-plays" << (loop ? "0" : "1");
     }
 
-    if (strOutputFile.endsWith(".mp4", Qt::CaseInsensitive))
+    const bool webm = strOutputFile.endsWith(".webm", Qt::CaseInsensitive);
+    if (strOutputFile.endsWith(".mp4", Qt::CaseInsensitive) || webm)
     {
-        args << "-pix_fmt" << "yuv420p";
+        // Newer FFmpeg/libvpx can otherwise select experimental planar RGB
+        // with alpha from our BGRA input, even when the canvas is opaque.
+        args << "-pix_fmt" << (webm && transparency ? "yuva420p" : "yuv420p");
     }
 
     if (strOutputFile.endsWith(".avi", Qt::CaseInsensitive))
