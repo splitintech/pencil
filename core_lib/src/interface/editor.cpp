@@ -119,6 +119,13 @@ void Editor::setFps(int fps)
     emit fpsChanged(fps);
 }
 
+void Editor::setProjectFps(int fps)
+{
+    mPlaybackManager->setProjectFps(fps);
+    mObject->modification();
+    emit fpsChanged(fps);
+}
+
 void Editor::makeConnections()
 {
     connect(mPreferenceManager, &PreferenceManager::optionChanged, this, &Editor::settingUpdated);
@@ -1076,6 +1083,33 @@ std::unique_ptr<Object> Editor::snapshot() const
         if (manager != mUndoRedoManager) { manager->save(result.get()); }
     }
     return result;
+}
+
+bool Editor::restoreHistorySnapshot(const Object& snapshot)
+{
+    QColor activeColor = mColorManager->frontColor(false);
+    int activeIndex = mColorManager->frontColorNumber();
+    if (!mObject->restoreHistorySnapshot(snapshot)) { return false; }
+    // Selection reset signals can query the current layer immediately.
+    mCurrentLayerIndex = qBound(0, mObject->data()->getCurrentLayer(), mObject->getLayerCount() - 1);
+    mFrame = qMax(1, mObject->data()->getCurrentFrame());
+    // Tool, viewport and preferences remain live. Refresh document managers
+    // without loading/clearing UndoRedoManager or replacing document identity.
+    mColorManager->setColorNumber(qBound(0, activeIndex, mObject->getColorCount()-1));
+    if (mObject->getLayer(mCurrentLayerIndex)->type() != Layer::VECTOR) { mColorManager->setFrontColor(activeColor); }
+    const QList<BaseManager*> managers {mLayerManager,
+                                       mSelectionManager, mPlaybackManager, mSoundManager};
+    for (auto manager : managers)
+    {
+        manager->load(mObject.get());
+    }
+    updateObject();
+    mRestoringHistory = true;
+    emit objectLoaded();
+    mRestoringHistory = false;
+    emit fpsChanged(playback()->fps());
+    emit framesModified();
+    return true;
 }
 
 bool Editor::canEditLayer(const Layer* layer, bool showWarning) const

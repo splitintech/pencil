@@ -7,6 +7,14 @@
 #include "filemanager.h"
 #include "layermanager.h"
 #include "layercamera.h"
+#include "layerbitmap.h"
+#include "layervector.h"
+#include "layersound.h"
+#include "bitmapimage.h"
+#include "vectorimage.h"
+#include "soundclip.h"
+#include "camera.h"
+#include "soundmanager.h"
 #include "keyframe.h"
 #include "playbackmanager.h"
 #include "undoredomanager.h"
@@ -19,6 +27,8 @@
 #include <QAction>
 #include <QBuffer>
 #include <QDir>
+#include <QDomDocument>
+#include <QSet>
 #include <QFileInfo>
 #include <QJsonDocument>
 #include <QLabel>
@@ -70,6 +80,25 @@ QString text(const QJsonObject& args, const QString& key)
     QString value = args.value(key).toString();
     require(!value.isEmpty() && value.size() <= 4096 && !value.contains(QChar(0)), "invalid_arguments", "Invalid string: " + key);
     return value;
+}
+
+std::unique_ptr<KeyFrame> copyKeyForEdit(Layer* layer, int frame)
+{
+    auto key = layer->getKeyFrameAt(frame);
+    require(key != nullptr, "invalid_selection", "An exact source keyframe is required");
+    std::unique_ptr<KeyFrame> copy(layer->type() == Layer::BITMAP
+        ? static_cast<KeyFrame*>(new BitmapImage(*static_cast<BitmapImage*>(key))) : key->clone());
+    require(copy != nullptr, "native_failure", "Native keyframe cloning failed");
+    if (layer->type() == Layer::BITMAP)
+    {
+        copy->loadFile();
+        require(key->fileName().isEmpty() || copy->isLoaded(), "missing_asset", "Bitmap backing data is unavailable");
+        copy->setFileName(QString());
+        copy->modification();
+    }
+    if (layer->type() == Layer::SOUND)
+    { static_cast<SoundClip*>(copy.get())->setDuration(static_cast<SoundClip*>(key)->duration()); }
+    return copy;
 }
 #ifdef Q_OS_WIN
 QByteArray currentWindowsUser()
@@ -225,32 +254,100 @@ QJsonArray inspectToolProperties(BaseTool* tool)
     }
     return result;
 }
-void validate(const QJsonObject& args, const QJsonObject& schema)
+void validateValue(const QJsonValue& value, const QJsonObject& schema, const QString& path)
 {
-    auto properties = schema.value("properties").toObject();
-    for (const auto& key : schema.value("required").toArray())
+    auto type = schema.value("type").toString();
+    auto bound = [&](const QString& name, double number, bool lower) {
+        if (!schema.contains(name)) { return; }
+        double limit = schema.value(name).toDouble();
+        require(lower ? number >= limit : number <= limit, "invalid_arguments", "Outside " + name + ": " + path);
+    };
+    if (schema.contains("enum"))
+    { require(schema.value("enum").toArray().contains(value), "invalid_arguments", "Invalid enum: " + path); }
+    if (type == "object")
     {
-        require(args.contains(key.toString()), "invalid_arguments", "Missing required argument: " + key.toString());
-    }
-    for (auto it = args.begin(); it != args.end(); ++it)
-    {
-        require(properties.contains(it.key()), "invalid_arguments", "Unknown argument: " + it.key());
-        auto property = properties.value(it.key()).toObject();
-        auto value = it.value();
-        QString type = property.value("type").toString();
-        if (type == "boolean") { require(value.isBool(), "invalid_arguments", "Expected boolean: " + it.key()); }
-        if (type == "string") { text(args, it.key()); }
-        if (type == "integer") { integer(args, it.key(), property.value("minimum").toInt(), property.value("maximum").toInt()); }
-        if (type == "number")
+        require(value.isObject(), "invalid_arguments", "Expected object: " + path);
+        auto object = value.toObject();
+        auto properties = schema.value("properties").toObject();
+        bound("minProperties", object.size(), true); bound("maxProperties", object.size(), false);
+        for (const auto& key : schema.value("required").toArray())
+        { require(object.contains(key.toString()), "invalid_arguments", "Missing argument: " + path + "." + key.toString()); }
+        auto dependencies = schema.value("dependentRequired").toObject();
+        for (auto it = dependencies.begin(); it != dependencies.end(); ++it)
         {
-            double number = value.toDouble(NAN);
-            require(std::isfinite(number) && number >= property.value("minimum").toDouble() && number <= property.value("maximum").toDouble(),
-                    "invalid_arguments", "Invalid number: " + it.key());
+            if (!object.contains(it.key())) { continue; }
+            for (const auto& key : it.value().toArray())
+            { require(object.contains(key.toString()), "invalid_arguments", "Missing dependent argument: " + key.toString()); }
         }
-        if (type == "array") { require(value.isArray(), "invalid_arguments", "Expected array: " + it.key()); }
-        if (property.contains("enum")) { require(property.value("enum").toArray().contains(value), "invalid_arguments", "Invalid enum: " + it.key()); }
+        for (auto it = object.begin(); it != object.end(); ++it)
+        {
+            if (properties.contains(it.key()))
+            { validateValue(it.value(), properties.value(it.key()).toObject(), path + "." + it.key()); }
+            else
+            {
+                require(schema.value("additionalProperties") != QJsonValue(false), "invalid_arguments", "Unknown argument: " + path + "." + it.key());
+                if (schema.value("additionalProperties").isObject())
+                { validateValue(it.value(), schema.value("additionalProperties").toObject(), path + "." + it.key()); }
+            }
+        }
+    }
+    else if (type == "array")
+    {
+        require(value.isArray(), "invalid_arguments", "Expected array: " + path);
+        auto array = value.toArray();
+        bound("minItems", array.size(), true); bound("maxItems", array.size(), false);
+        QSet<QByteArray> seen;
+        for (int i = 0; i < array.size(); ++i)
+        {
+            if (schema.contains("items")) { validateValue(array.at(i), schema.value("items").toObject(), path + "[" + QString::number(i) + "]"); }
+            if (schema.value("uniqueItems").toBool())
+            {
+                auto key = QJsonDocument(QJsonArray {array.at(i)}).toJson(QJsonDocument::Compact);
+                require(!seen.contains(key), "invalid_arguments", "Duplicate array item: " + path);
+                seen.insert(key);
+            }
+        }
+    }
+    else if (type == "string")
+    {
+        require(value.isString() && !value.toString().contains(QChar(0)), "invalid_arguments", "Expected string without NUL: " + path);
+        bound("minLength", value.toString().size(), true); bound("maxLength", value.toString().size(), false);
+    }
+    else if (type == "boolean")
+    { require(value.isBool(), "invalid_arguments", "Expected boolean: " + path); }
+    else if (type == "integer" || type == "number")
+    {
+        double number = value.toDouble(NAN);
+        require(value.isDouble() && std::isfinite(number) && (type != "integer" || std::floor(number) == number),
+                "invalid_arguments", "Expected finite " + type + ": " + path);
+        bound("minimum", number, true); bound("maximum", number, false);
     }
 }
+void validate(const QJsonObject& args, const QJsonObject& schema)
+{ validateValue(args, schema, "arguments"); }
+void validateBatch(const QJsonObject& args)
+{
+    auto steps = args.value("operations").toArray();
+    require(!steps.isEmpty() && steps.size() <= 64, "invalid_arguments", "Provide 1–64 document operations");
+    int samples = 0;
+    // Validate every nested contract before executing the first operation.
+    for (const auto& value : steps)
+    {
+        auto step = value.toObject();
+        require(step.size() == 2 && step.value("operation").isString() && step.value("arguments").isObject(),
+                "invalid_arguments", "Each batch step requires operation and arguments only");
+        auto id = step.value("operation").toString();
+        QJsonObject contract;
+        for (const auto& candidate : ::operations())
+        { if (candidate.toObject().value("id").toString() == id) { contract = candidate.toObject(); break; } }
+        require(id != "edit.batch" && contract.value("undo").toString() == "native_document_transaction",
+                "unsupported_atomic_operation", "Batch accepts undoable document edits only");
+        validate(step.value("arguments").toObject(), contract.value("input").toObject());
+        if (id == "canvas.stroke") { samples += step.value("arguments").toObject().value("points").toArray().size(); }
+    }
+    require(samples <= 16384, "invalid_arguments", "Batch exceeds 16384 native pointer samples");
+}
+
 }
 
 AutomationBridge::AutomationBridge(MainWindow2* window) : QObject(window), mWindow(window), mEditor(window->mEditor)
@@ -260,7 +357,7 @@ AutomationBridge::AutomationBridge(MainWindow2* window) : QObject(window), mWind
     connect(mEditor, &Editor::frameModified, this, [this] { changed("frame"); });
     connect(mEditor, &Editor::framesModified, this, [this] { changed("frames"); });
     connect(mEditor, &Editor::objectLoaded, this, [this] {
-        mDocumentId = QUuid::createUuid().toString(QUuid::WithoutBraces);
+        if (!mEditor->isRestoringHistory()) { mDocumentId = QUuid::createUuid().toString(QUuid::WithoutBraces); }
         changed("document");
     });
     connect(mEditor, &Editor::fpsChanged, this, [this] { changed("fps"); });
@@ -415,8 +512,18 @@ QJsonObject AutomationBridge::dispatch(const QJsonObject& request)
         }
         require(request.value("arguments").isObject(), "invalid_arguments", "Arguments must be an object");
         validate(request.value("arguments").toObject(), contract.value("input").toObject());
+        if (op == "edit.batch") { validateBatch(request.value("arguments").toObject()); }
         mExecuting = true;
+        bool documentEdit = contract.value("undo").toString() == "native_document_transaction";
+        if (documentEdit)
+        { require(mEditor->undoRedo()->beginDocumentEdit(), "snapshot_failed", "Could not prepare native undo state"); }
         QJsonObject result = execute(op, request.value("arguments").toObject());
+        if (documentEdit)
+        {
+            require(mEditor->undoRedo()->commitDocumentEdit(op), "snapshot_failed", "Could not commit native undo state");
+            auto current = state();
+            for (auto it = current.begin(); it != current.end(); ++it) { result.insert(it.key(), it.value()); }
+        }
         if (writes) { changed(op, op != "document.snapshot" && op != "document.checkpoint"); }
         result.insert("session_id", mSessionId);
         result.insert("document_id", mDocumentId);
@@ -425,12 +532,14 @@ QJsonObject AutomationBridge::dispatch(const QJsonObject& request)
     }
     catch (const Failure& error)
     {
-        response.insert("error", QJsonObject {{"code", error.code}, {"message", QString::fromUtf8(error.what())},
-            {"details", QJsonObject {{"revision", static_cast<double>(mRevision)}, {"document_id", mDocumentId}}}});
+        bool restored = !mEditor->undoRedo()->documentEditActive() || mEditor->undoRedo()->rollbackDocumentEdit();
+        response.insert("error", QJsonObject {{"code", restored ? error.code : QString("rollback_failed")}, {"message", QString::fromUtf8(error.what())},
+            {"details", QJsonObject {{"revision", static_cast<double>(mRevision)}, {"document_id", mDocumentId}, {"rollback_succeeded", restored}}}});
     }
     catch (const std::exception&)
     {
-        response.insert("error", QJsonObject {{"code", "native_failure"}, {"message", "Native operation failed"}});
+        bool restored = !mEditor->undoRedo()->documentEditActive() || mEditor->undoRedo()->rollbackDocumentEdit();
+        response.insert("error", QJsonObject {{"code", restored ? "native_failure" : "rollback_failed"}, {"message", "Native operation failed"}});
     }
     mExecuting = false;
     return response;
@@ -479,14 +588,35 @@ QJsonObject AutomationBridge::state() const
     {
         auto layer = object->getLayer(i);
         QJsonArray frames;
-        layer->foreachKeyFrame([&frames](KeyFrame* key) { frames.append(QJsonObject {{"frame", key->pos()}, {"length", key->length()}}); });
-        layers.append(QJsonObject {{"layer_id", mDocumentId + ":" + QString::number(layer->id())}, {"native_id", layer->id()},
-            {"index", i}, {"name", layer->name()}, {"type", static_cast<int>(layer->type())}, {"visible", layer->visible()}, {"frames", frames}});
+        layer->foreachKeyFrame([&frames, layer](KeyFrame* key) {
+            QJsonObject frame {{"frame", key->pos()}, {"length", key->length()}, {"selected", layer->isFrameSelected(key->pos())}};
+            if (layer->type() == Layer::BITMAP) { frame.insert("opacity", static_cast<BitmapImage*>(key)->getOpacity()); }
+            if (layer->type() == Layer::VECTOR) { frame.insert("opacity", static_cast<VectorImage*>(key)->getOpacity()); }
+            if (layer->type() == Layer::CAMERA)
+            {
+                auto camera = static_cast<Camera*>(key);
+                frame.insert("x", camera->translation().x()); frame.insert("y", camera->translation().y());
+                frame.insert("rotation", camera->rotation()); frame.insert("scale", camera->scaling());
+                frame.insert("easing", static_cast<int>(camera->getEasingType()));
+                frame.insert("path_x", camera->getPathControlPoint().x()); frame.insert("path_y", camera->getPathControlPoint().y());
+                frame.insert("path_moved", camera->pathControlPointMoved());
+            }
+            frames.append(frame);
+        });
+        QJsonObject row {{"layer_id", mDocumentId + ":" + QString::number(layer->id())}, {"native_id", layer->id()},
+            {"index", i}, {"name", layer->name()}, {"type", static_cast<int>(layer->type())}, {"visible", layer->visible()}, {"frames", frames}};
+        if (layer->type() == Layer::CAMERA)
+        {
+            auto size = static_cast<LayerCamera*>(layer)->getViewSize();
+            row.insert("width", size.width()); row.insert("height", size.height());
+        }
+        layers.append(row);
     }
     return {{"path", object->filePath()}, {"dirty", object->isModified() || mEditor->undoRedo()->hasUnsavedChanges()},
         {"frame", mEditor->currentFrame()}, {"layer_index", mEditor->currentLayerIndex()}, {"fps", mEditor->fps()},
         {"layers", layers}, {"tool", static_cast<int>(mEditor->tools()->currentTool()->type())},
-        {"event_sequence", static_cast<double>(mEventSequence)}};
+        {"event_sequence", static_cast<double>(mEventSequence)},
+        {"history", QJsonObject {{"can_undo", mEditor->undoRedo()->canUndo()}, {"can_redo", mEditor->undoRedo()->canRedo()}}}};
 }
 
 QJsonObject AutomationBridge::execute(const QString& op, const QJsonObject& args)
@@ -499,6 +629,18 @@ QJsonObject AutomationBridge::execute(const QString& op, const QJsonObject& args
             {"operations", operations}, {"workspaces", QJsonArray::fromStringList(mWorkspaces)}, {"qualified_alpha", false}};
     }
     if (op == "document.inspect") { return state(); }
+    if (op == "edit.batch")
+    {
+        auto steps = args.value("operations").toArray();
+        for (const auto& value : steps)
+        {
+            auto step = value.toObject();
+            execute(step.value("operation").toString(), step.value("arguments").toObject());
+        }
+        auto result = state();
+        result.insert("completed", steps.size());
+        return result;
+    }
     if (op == "session.disconnect")
     {
         // Revoke authentication immediately, including already connected peers.
@@ -575,8 +717,21 @@ QJsonObject AutomationBridge::execute(const QString& op, const QJsonObject& args
     }
     if (op == "frame.preview")
     {
-        auto layer = dynamic_cast<LayerCamera*>(mEditor->layers()->getLastCameraLayer());
-        require(layer != nullptr, "invalid_selection", "No camera layer available");
+        auto liveCamera = args.contains("camera_index")
+            ? dynamic_cast<LayerCamera*>(mEditor->object()->getLayer(integer(args, "camera_index", 0, mEditor->layers()->count()-1)))
+            : dynamic_cast<LayerCamera*>(mEditor->layers()->getLastCameraLayer());
+        require(liveCamera != nullptr, "invalid_selection", "No camera layer available");
+        auto snapshot = mEditor->snapshot();
+        require(snapshot != nullptr, "snapshot_failed", "Could not prepare independent preview content");
+        auto layer = static_cast<LayerCamera*>(snapshot->findLayerById(liveCamera->id()));
+        // Match native save/export's minimal bitmap bounds without changing
+        // live keyframes or loading their backing assets during observation.
+        for (int i = 0; i < snapshot->getLayerCount(); ++i)
+        {
+            auto content = snapshot->getLayer(i);
+            if (content->type() == Layer::BITMAP)
+            { content->foreachKeyFrame([](KeyFrame* key) { static_cast<BitmapImage*>(key)->autoCrop(); }); }
+        }
         int frame = args.contains("frame") ? integer(args, "frame", 1, 1000000) : mEditor->currentFrame();
         QSize size = layer->getViewSize();
         require(size.width() > 0 && size.height() > 0 && size.width() <= 4096 && size.height() <= 4096,
@@ -586,7 +741,7 @@ QJsonObject AutomationBridge::execute(const QString& op, const QJsonObject& args
         QPainter painter(&image);
         painter.translate(size.width() / 2.0, size.height() / 2.0);
         painter.setTransform(layer->getViewAtFrame(frame), true);
-        mEditor->object()->paintImage(painter, frame, false, true);
+        snapshot->paintImage(painter, frame, false, true);
         painter.end();
         QByteArray bytes;
         QBuffer buffer(&bytes);
@@ -671,6 +826,174 @@ QJsonObject AutomationBridge::execute(const QString& op, const QJsonObject& args
         mEditor->object()->modification();
     }
     else if (op == "layer.select") { mEditor->layers()->setCurrentLayer(integer(args, "index", 0, mEditor->layers()->count()-1)); }
+    else if (op == "layer.update" || op == "layer.delete" || op == "layer.duplicate" || op == "layer.reorder")
+    {
+        int index = integer(args, "index", 0, mEditor->layers()->count()-1);
+        auto layer = mEditor->object()->getLayer(index);
+        if (op == "layer.delete")
+        {
+            require(mEditor->layers()->canDeleteLayer(index), "invalid_context", "The protected bottom camera cannot be deleted");
+            mEditor->layers()->setCurrentLayer(index);
+            require(mEditor->layers()->deleteLayer(index).ok(), "invalid_context", "Native layer deletion was rejected");
+        }
+        else if (op == "layer.update")
+        {
+            require(args.contains("name") || args.contains("visible"), "invalid_arguments", "Provide a layer name or visibility");
+            mEditor->layers()->setCurrentLayer(index);
+            if (args.contains("name")) { require(mEditor->layers()->renameLayer(layer, text(args, "name")).ok(), "invalid_arguments", "Invalid layer name"); }
+            if (args.contains("visible") && layer->visible() != args.value("visible").toBool()) { mEditor->switchVisibilityOfLayer(index); }
+        }
+        else if (op == "layer.reorder")
+        {
+            int target = integer(args, "target", 0, mEditor->layers()->count()-1);
+            // Validate the full path before changing the layer stack.
+            for (int at = index; at != target; at += target > index ? 1 : -1)
+            { require(mEditor->canSwapLayers(at, at + (target > index ? 1 : -1)), "invalid_context", "Cannot move the protected bottom camera"); }
+            mEditor->layers()->setCurrentLayer(index);
+            for (int at = index; at != target; at += target > index ? 1 : -1)
+            { mEditor->swapLayers(at, at + (target > index ? 1 : -1)); }
+            mEditor->layers()->setCurrentLayer(target);
+        }
+        else
+        {
+            mEditor->layers()->setCurrentLayer(index);
+            std::unique_ptr<Layer> duplicate;
+            switch (layer->type())
+            {
+            case Layer::BITMAP: duplicate.reset(new LayerBitmap(0)); break;
+            case Layer::VECTOR: duplicate.reset(new LayerVector(0)); break;
+            case Layer::SOUND: duplicate.reset(new LayerSound(0)); break;
+            case Layer::CAMERA: duplicate.reset(new LayerCamera(0)); break;
+            default: throw Failure("unsupported_capability", "Unsupported layer type");
+            }
+            QDomDocument metadata;
+            auto element = layer->type() == Layer::BITMAP
+                ? layer->createBaseDomElement(metadata) : layer->createDomElement(metadata);
+            while (!element.firstChild().isNull()) { element.removeChild(element.firstChild()); }
+            duplicate->loadDomElement(element, mEditor->object()->dataDir(), [] {});
+            duplicate->setName(text(args, "name"));
+            layer->foreachKeyFrame([&](KeyFrame* key) { duplicate->addOrReplaceKeyFrame(key->pos(), copyKeyForEdit(layer, key->pos()).release()); });
+            require(mEditor->object()->addLayer(duplicate.get()), "native_failure", "Native layer insertion failed");
+            duplicate.release();
+            emit mEditor->layers()->layerCountChanged(mEditor->layers()->count());
+            mEditor->layers()->setCurrentLayer(mEditor->layers()->count()-1);
+            if (layer->type() == Layer::SOUND)
+            {
+                mEditor->layers()->currentLayer()->foreachKeyFrame([this](KeyFrame* key) {
+                    require(mEditor->sound()->processSound(static_cast<SoundClip*>(key)).ok(), "native_failure", "Duplicated sound could not be initialized");
+                });
+            }
+        }
+        mEditor->object()->modification();
+        emit mEditor->framesModified();
+    }
+    else if (op == "timeline.duplicate_key" || op == "timeline.move_key" || op == "timeline.remove_keys" ||
+             op == "timeline.select_keys" || op == "timeline.reverse" || op == "timeline.expose" || op == "content.opacity")
+    {
+        int index = integer(args, "index", 0, mEditor->layers()->count()-1);
+        auto layer = mEditor->object()->getLayer(index);
+        require(layer->visible(), "invalid_context", "Timeline editing requires a visible layer");
+        mEditor->layers()->setCurrentLayer(index);
+        if (op == "timeline.duplicate_key" || op == "timeline.move_key")
+        {
+            int from = integer(args, "from", 1, 1000000), to = integer(args, "to", 1, 1000000);
+            require(from != to && layer->keyExists(from), "invalid_selection", "Provide different positions and an exact source key");
+            require(!layer->keyExists(to) || (op == "timeline.move_key" && args.value("swap").toBool()), "invalid_context", "Destination keyframe already exists");
+            if (op == "timeline.duplicate_key")
+            {
+                require(layer->addKeyFrame(to, copyKeyForEdit(layer, from).release()), "native_failure", "Native key duplication failed");
+                if (layer->type() == Layer::SOUND)
+                { require(mEditor->sound()->processSound(static_cast<SoundClip*>(layer->getKeyFrameAt(to))).ok(), "native_failure", "Duplicated sound could not be initialized"); }
+            }
+            else { require(layer->moveKeyFrame(from, to-from), "invalid_context", "Native key movement failed"); }
+            mEditor->scrubTo(to);
+        }
+        else
+        {
+            auto frames = args.value("frames").toArray();
+            require(!frames.isEmpty() && frames.size() <= 4096, "invalid_arguments", "Provide 1–4096 exact keyframes");
+            QSet<int> selected;
+            for (const auto& value : frames)
+            {
+                QJsonObject sample {{"frame", value}};
+                int frame = integer(sample, "frame", 1, 1000000);
+                require(layer->keyExists(frame) && !selected.contains(frame), "invalid_selection", "Frame selection must contain unique existing keys");
+                selected.insert(frame);
+            }
+            require(op != "timeline.remove_keys" || layer->type() == Layer::SOUND || selected.size() < layer->keyFrameCount(),
+                    "invalid_context", "A non-sound layer must retain one keyframe");
+            if (op == "content.opacity")
+            { require(layer->isPaintable(), "invalid_context", "Opacity requires bitmap or vector content"); }
+            layer->deselectAll();
+            for (const auto& frame : frames) { layer->setFrameSelected(frame.toInt(), true); }
+            if (op == "timeline.remove_keys")
+            { for (int frame : selected) { require(layer->removeKeyFrame(frame), "native_failure", "Native key removal failed"); } }
+            else if (op == "timeline.reverse")
+            { require(layer->reverseOrderOfSelection(), "invalid_context", "Native reverse failed"); }
+            else if (op == "timeline.expose")
+            {
+                int delta = integer(args, "delta", -1000, 1000);
+                require(delta != 0 && std::abs(delta) * selected.size() <= 16384 &&
+                    layer->getMaxKeyFramePosition() + qMax(delta, 0) * selected.size() <= 1000000,
+                    "invalid_arguments", "Exposure exceeds the native operation budget");
+                layer->setExposureForSelectedFrames(delta);
+            }
+            else if (op == "content.opacity")
+            {
+                qreal opacity = args.value("opacity").toDouble();
+                for (int frame : selected)
+                {
+                    auto key = layer->getKeyFrameAt(frame);
+                    if (layer->type() == Layer::BITMAP) { static_cast<BitmapImage*>(key)->setOpacity(opacity); }
+                    else { static_cast<VectorImage*>(key)->setOpacity(opacity); }
+                    key->modification();
+                }
+            }
+        }
+        if (op != "timeline.select_keys") { mEditor->object()->modification(); }
+        mEditor->layers()->notifyAnimationLengthChanged();
+        emit mEditor->framesModified();
+    }
+    else if (op == "camera.configure" || op == "camera.key" || op == "camera.reset")
+    {
+        int index = integer(args, "index", 0, mEditor->layers()->count()-1);
+        auto layer = dynamic_cast<LayerCamera*>(mEditor->object()->getLayer(index));
+        require(layer != nullptr, "invalid_context", "Select a camera layer");
+        mEditor->layers()->setCurrentLayer(index);
+        if (op == "camera.configure")
+        {
+            int width = integer(args, "width", 1, 8192), height = integer(args, "height", 1, 8192);
+            layer->setViewRect(QRect(-width/2, -height/2, width, height));
+        }
+        else
+        {
+            int frame = integer(args, "frame", 1, 1000000);
+            if (op == "camera.key")
+            {
+                require(!layer->keyExists(frame) || args.value("overwrite").toBool(), "overwrite_required", "Explicit camera key overwrite required");
+                if (!layer->keyExists(frame)) { require(layer->addNewKeyFrameAt(frame), "native_failure", "Camera key creation failed"); }
+                auto camera = layer->getCameraAtFrame(frame);
+                camera->translate(args.value("x").toDouble(), args.value("y").toDouble());
+                camera->rotate(args.value("rotation").toDouble()); camera->scale(args.value("scale").toDouble());
+                if (args.contains("easing")) { camera->setEasingType(static_cast<CameraEasingType>(integer(args, "easing", 0, 40))); }
+                require(args.contains("path_x") == args.contains("path_y"), "invalid_arguments", "Camera path coordinates must be paired");
+                if (args.contains("path_x"))
+                { camera->setPathControlPoint(QPointF(args.value("path_x").toDouble(), args.value("path_y").toDouble())); }
+                if (args.contains("path_moved")) { camera->setPathControlPointMoved(args.value("path_moved").toBool()); }
+            }
+            else
+            {
+                require(layer->keyExists(frame), "invalid_selection", "An exact camera key is required");
+                int field = integer(args, "field", 0, 6);
+                require(field < 4 || layer->getNextKeyFramePosition(frame) > frame, "invalid_context", "Camera alignment requires a following key");
+                layer->resetCameraAtFrame(static_cast<CameraFieldOption>(field), frame);
+            }
+            mEditor->scrubTo(frame);
+        }
+        mEditor->object()->modification();
+        mEditor->view()->forceUpdateViewTransform();
+        emit mEditor->framesModified();
+    }
     else if (op == "timeline.scrub") { mEditor->scrubTo(integer(args, "frame", 1, 1000000)); }
     else if (op == "timeline.add_key")
     {
@@ -682,7 +1005,7 @@ QJsonObject AutomationBridge::execute(const QString& op, const QJsonObject& args
     else if (op == "project.fps")
     {
         int fps = integer(args, "fps", 1, 120);
-        mEditor->playback()->setFps(fps); mEditor->setFps(fps); mEditor->object()->modification();
+        mEditor->setProjectFps(fps);
     }
     else if (op == "tool.select") { mEditor->tools()->setCurrentTool(static_cast<ToolType>(integer(args, "type", 0, TOOL_TYPE_COUNT-1))); }
     else if (op == "color.set")
@@ -759,11 +1082,10 @@ QJsonObject AutomationBridge::execute(const QString& op, const QJsonObject& args
     }
     else if (op == "history.undo" || op == "history.redo")
     {
-        auto action = op == "history.undo" ? mEditor->undoRedo()->createUndoAction(this, QIcon()) : mEditor->undoRedo()->createRedoAction(this, QIcon());
-        if (op == "history.undo") { mEditor->undoRedo()->updateUndoAction(action); }
-        else { mEditor->undoRedo()->updateRedoAction(action); }
-        require(action->isEnabled(), "invalid_context", "No native history action available");
-        action->trigger(); action->deleteLater();
+        auto history = mEditor->undoRedo();
+        bool undo = op == "history.undo";
+        require(undo ? history->canUndo() : history->canRedo(), "invalid_context", "No native history action available");
+        require(undo ? history->undoLast() : history->redoLast(), "history_conflict", "Newer document changes prevent safe history restoration");
     }
     else if (op == "view.set")
     {

@@ -29,7 +29,7 @@ class LegacyBackupElement : public QObject
 {
     Q_OBJECT
 public:
-    enum types { UNDEFINED, BITMAP_MODIF, VECTOR_MODIF, SOUND_MODIF };
+    enum types { UNDEFINED, BITMAP_MODIF, VECTOR_MODIF, SOUND_MODIF, DOCUMENT_CHANGE };
 
     QString undoText;
     bool somethingSelected = false;

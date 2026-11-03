@@ -111,6 +111,8 @@ public:
     void updateObject();
     void prepareSave(bool markHistoryClean = true);
     std::unique_ptr<Object> snapshot() const;
+    bool restoreHistorySnapshot(const Object& snapshot);
+    bool isRestoringHistory() const { return mRestoringHistory; }
 
     void setScribbleArea(ScribbleArea* pScirbbleArea) { mScribbleArea = pScirbbleArea; }
     ScribbleArea* getScribbleArea() { return mScribbleArea; }
@@ -118,6 +120,7 @@ public:
     int currentFrame() const;
     int fps();
     void setFps(int fps);
+    void setProjectFps(int fps);
 
     int  currentLayerIndex() const { return mCurrentLayerIndex; }
     void setCurrentLayerIndex(int i);
@@ -236,6 +239,7 @@ public: //slots
     void resetAutoSaveCounter();
 
 private:
+    bool mRestoringHistory = false;
     Status importBitmapImage(const QString&, const QTransform& importTransform);
     Status importVectorImage(const QString&);
 

@@ -122,6 +122,10 @@ TEST_CASE("Object::getUniqueLayerID()")
         Layer* vectorLayer = obj->addNewVectorLayer();
         REQUIRE(vectorLayer->id() == 2);
         REQUIRE(obj->getUniqueLayerID() == 3);
+        obj->deleteLayer(vectorLayer);
+        REQUIRE(obj->getUniqueLayerID() == 3);
+        REQUIRE(obj->getUniqueLayerID() == 3);
+        REQUIRE(obj->addNewVectorLayer()->id() == 3);
     }
 }
 
@@ -354,6 +358,24 @@ TEST_CASE("Snapshots load bitmap backing data only into the independent copy")
         REQUIRE(copy->fileName().isEmpty());
         REQUIRE(copy->pixel(11, 22) == qRgba(255, 0, 0, 255));
     }
+}
+
+TEST_CASE("Snapshot metadata and serialization do not crop a live bitmap")
+{
+    Object source;
+    source.init();
+    auto layer = source.addNewBitmapLayer();
+    auto original = new BitmapImage(QRect(-20, -20, 40, 40), Qt::transparent);
+    original->enableAutoCrop(true);
+    original->setPixel(0, 0, qRgba(255, 0, 0, 255));
+    layer->addOrReplaceKeyFrame(1, original);
+    auto bytes = *original->image();
+    REQUIRE(bytes.size() == QSize(40, 40));
+    auto snapshot = source.cloneForSnapshot();
+    REQUIRE(snapshot != nullptr);
+    REQUIRE_FALSE(snapshot->contentSignature().isEmpty());
+    REQUIRE(*original->image() == bytes);
+    REQUIRE(original->image()->size() == QSize(40, 40));
 }
 
 TEST_CASE("Snapshots own sound asset bytes and retain native timing")

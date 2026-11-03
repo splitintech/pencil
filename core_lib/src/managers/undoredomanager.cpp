@@ -42,13 +42,238 @@ GNU General Public License for more details.
 #include "vectorimage.h"
 #include "soundclip.h"
 
+namespace {
+SelectionSaveState selectionState(Editor* editor)
+{
+    auto selection = editor->select();
+    return {selection->mySelectionRect(), selection->myRotation(), selection->myScaleX(),
+            selection->myScaleY(), selection->myTranslation(), selection->currentTransformAnchor()};
+}
+
+bool restoreDocument(Editor* editor, const Object& object, const SelectionSaveState& state)
+{
+    if (!editor->restoreHistorySnapshot(object)) { return false; }
+    auto selection = editor->select();
+    selection->setSelection(state.bounds, false);
+    selection->setRotation(state.rotationAngle);
+    selection->setScale(state.scaleX, state.scaleY);
+    selection->setTranslation(state.translation);
+    selection->setTransformAnchor(state.anchor);
+    selection->calculateSelectionTransformation();
+    editor->undoRedo()->restoreDirtyState(object.contentSignature());
+    return true;
+}
+
+class DocumentEditCommand : public QUndoCommand
+{
+public:
+    DocumentEditCommand(Editor* editor, std::unique_ptr<Object> before, std::unique_ptr<Object> after,
+                        SelectionSaveState beforeSelection, SelectionSaveState afterSelection, const QString& text)
+        : QUndoCommand(text), mEditor(editor), mBefore(std::move(before)), mAfter(std::move(after)),
+          mBeforeSelection(beforeSelection), mAfterSelection(afterSelection),
+          mBeforeSignature(mBefore->contentSignature()), mAfterSignature(mAfter->contentSignature()) {}
+    bool matches(bool undo) const
+    {
+        auto current = mEditor->snapshot();
+        return current && current->contentSignature() == (undo ? mAfterSignature : mBeforeSignature);
+    }
+    void undo() override { bool ok = restoreDocument(mEditor, *mBefore, mBeforeSelection); Q_ASSERT(ok); }
+    void redo() override
+    {
+        if (mFirstRedo) { mFirstRedo = false; return; }
+        bool ok = restoreDocument(mEditor, *mAfter, mAfterSelection); Q_ASSERT(ok);
+    }
+private:
+    Editor* mEditor;
+    std::unique_ptr<Object> mBefore, mAfter;
+    SelectionSaveState mBeforeSelection, mAfterSelection;
+    bool mFirstRedo = true;
+    QByteArray mBeforeSignature, mAfterSignature;
+};
+
+class DocumentLegacyElement : public LegacyBackupElement
+{
+public:
+    DocumentLegacyElement(DocumentEditCommand* value, std::unique_ptr<LegacyBackupElement> previous)
+        : command(value), boundary(std::move(previous)) { undoText = value->text(); }
+    int type() override { return DOCUMENT_CHANGE; }
+    // The preceding legacy edit's redo needs the state at this boundary.
+    void restore(Editor* editor) override { if (boundary) { boundary->restore(editor); } }
+    std::unique_ptr<DocumentEditCommand> command;
+    std::unique_ptr<LegacyBackupElement> boundary;
+};
+
+std::unique_ptr<LegacyBackupElement> legacyBoundary(LegacyBackupElement* previous, Object& object,
+                                                   const SelectionSaveState& selection)
+{
+    int layerId = 0, frame = 0;
+    if (previous->type() == LegacyBackupElement::BITMAP_MODIF)
+    { auto p = static_cast<BackupLegacyBitmapElement*>(previous); layerId = p->layerId; frame = p->frame; }
+    else if (previous->type() == LegacyBackupElement::VECTOR_MODIF)
+    { auto p = static_cast<BackupLegacyVectorElement*>(previous); layerId = p->layerId; frame = p->frame; }
+    else if (previous->type() == LegacyBackupElement::SOUND_MODIF)
+    { auto p = static_cast<BackupLegacySoundElement*>(previous); layerId = p->layerId; frame = p->frame; }
+    else { return nullptr; }
+    auto layer = object.findLayerById(layerId);
+    auto key = layer ? layer->getKeyFrameAt(frame) : nullptr;
+    if (!key) { return nullptr; }
+    int index = 0;
+    while (object.getLayer(index) != layer) { ++index; }
+    std::unique_ptr<LegacyBackupElement> result;
+    if (layer->type() == Layer::BITMAP)
+    {
+        auto value = new BackupLegacyBitmapElement(static_cast<BitmapImage*>(key));
+        value->layerId = layerId; value->layer = index; value->frame = frame; result.reset(value);
+    }
+    else if (layer->type() == Layer::VECTOR)
+    {
+        auto value = new BackupLegacyVectorElement(static_cast<VectorImage*>(key));
+        value->layerId = layerId; value->layer = index; value->frame = frame; result.reset(value);
+    }
+    else if (layer->type() == Layer::SOUND)
+    {
+        auto clip = static_cast<SoundClip*>(key);
+        auto value = new BackupLegacySoundElement(clip);
+        value->layerId = layerId; value->layer = index; value->frame = frame;
+        value->fileName = clip->fileName(); value->originalName = clip->soundClipName();
+        value->clip.setDuration(clip->duration()); result.reset(value);
+    }
+    if (result)
+    {
+        result->mySelection = selection.bounds; result->rotationAngle = selection.rotationAngle;
+        result->scaleX = selection.scaleX; result->scaleY = selection.scaleY;
+        result->translation = selection.translation; result->selectionAnchor = selection.anchor;
+    }
+    return result;
+}
+}
+
+bool UndoRedoManager::beginDocumentEdit()
+{
+    if (mDocumentEdit) { return false; }
+    auto before = editor()->snapshot();
+    if (!before || !object()->prepareHistoryAssets(*before) || before->contentSignature().isEmpty()) { return false; }
+    mDocumentSelection = selectionState(editor());
+    mDocumentEdit = std::move(before);
+    return true;
+}
+
+bool UndoRedoManager::commitDocumentEdit(const QString& description)
+{
+    if (!mDocumentEdit) { return false; }
+    auto after = editor()->snapshot();
+    if (!after || !object()->prepareHistoryAssets(*after) || after->contentSignature().isEmpty()) { return false; }
+    auto boundary = !mNewBackupSystemEnabled && mLegacyBackupIndex >= 0
+        ? legacyBoundary(mLegacyBackupList[mLegacyBackupIndex], *mDocumentEdit, mDocumentSelection) : nullptr;
+    auto command = new DocumentEditCommand(editor(), std::move(mDocumentEdit), std::move(after),
+                                           mDocumentSelection, selectionState(editor()), description);
+    if (mNewBackupSystemEnabled) { pushCommand(command); }
+    else
+    {
+        trimLegacyRedo();
+        command->redo(); // Consume QUndoStack's initial redo convention.
+        mLegacyBackupList.append(new DocumentLegacyElement(command, std::move(boundary)));
+        ++mLegacyBackupIndex;
+        emit didUpdateUndoStack();
+    }
+    mLegacyLastModifiedLayer = mLegacyLastModifiedFrame = -1;
+    return true;
+}
+
+bool UndoRedoManager::rollbackDocumentEdit()
+{
+    if (!mDocumentEdit) { return false; }
+    bool ok = restoreDocument(editor(), *mDocumentEdit, mDocumentSelection);
+    mDocumentEdit.reset();
+    mLegacyLastModifiedLayer = mLegacyLastModifiedFrame = -1;
+    return ok;
+}
+
+void UndoRedoManager::trimLegacyRedo()
+{
+    if (mLegacyCleanIndex > mLegacyBackupIndex) { mLegacyCleanIndex = -2; }
+    while (mLegacyBackupList.size() - 1 > mLegacyBackupIndex) { delete mLegacyBackupList.takeLast(); }
+    int limit = qMax(1, editor()->preference()->getInt(SETTING::UNDO_REDO_MAX_STEPS));
+    while (mLegacyBackupList.size() >= limit)
+    {
+        delete mLegacyBackupList.takeFirst();
+        --mLegacyBackupIndex;
+        mLegacyCleanIndex = mLegacyCleanIndex >= 0 ? mLegacyCleanIndex - 1 : -2;
+    }
+}
+
+bool UndoRedoManager::canLegacyRedo() const
+{
+    int next = mLegacyBackupIndex + 1;
+    return next < mLegacyBackupList.size() &&
+        (mLegacyBackupList[next]->type() == LegacyBackupElement::DOCUMENT_CHANGE || next + 1 < mLegacyBackupList.size());
+}
+
+bool UndoRedoManager::canUndo() const
+{ return mNewBackupSystemEnabled ? mUndoStack.canUndo() : mLegacyBackupIndex >= 0; }
+
+bool UndoRedoManager::canRedo() const
+{ return mNewBackupSystemEnabled ? mUndoStack.canRedo() : canLegacyRedo(); }
+
+bool UndoRedoManager::undoLast()
+{
+    if (mDocumentEdit || !canUndo()) { return false; }
+    if (mNewBackupSystemEnabled)
+    {
+        auto command = dynamic_cast<const DocumentEditCommand*>(mUndoStack.command(mUndoStack.index() - 1));
+        if (command && !command->matches(true)) { return false; }
+        mUndoStack.undo();
+    }
+    else
+    {
+        auto element = mLegacyBackupList[mLegacyBackupIndex];
+        if (element->type() == LegacyBackupElement::DOCUMENT_CHANGE &&
+            !static_cast<DocumentLegacyElement*>(element)->command->matches(true)) { return false; }
+        legacyUndo();
+    }
+    auto current = editor()->snapshot();
+    if (current) { restoreDirtyState(current->contentSignature()); }
+    return true;
+}
+
+bool UndoRedoManager::redoLast()
+{
+    if (mDocumentEdit || !canRedo()) { return false; }
+    if (mNewBackupSystemEnabled)
+    {
+        auto command = dynamic_cast<const DocumentEditCommand*>(mUndoStack.command(mUndoStack.index()));
+        if (command && !command->matches(false)) { return false; }
+        mUndoStack.redo();
+    }
+    else
+    {
+        auto element = mLegacyBackupList[mLegacyBackupIndex + 1];
+        if (element->type() == LegacyBackupElement::DOCUMENT_CHANGE &&
+            !static_cast<DocumentLegacyElement*>(element)->command->matches(false)) { return false; }
+        if (element->type() != LegacyBackupElement::DOCUMENT_CHANGE)
+        {
+            auto next = mLegacyBackupList[mLegacyBackupIndex + 2];
+            if (next->type() == LegacyBackupElement::DOCUMENT_CHANGE && !static_cast<DocumentLegacyElement*>(next)->boundary)
+            { return false; }
+        }
+        legacyRedo();
+    }
+    auto current = editor()->snapshot();
+    if (current) { restoreDirtyState(current->contentSignature()); }
+    return true;
+}
+
+void UndoRedoManager::restoreDirtyState(const QByteArray& signature)
+{ object()->setModified(mCleanSignature.isEmpty() || signature != mCleanSignature); }
 UndoRedoManager::UndoRedoManager(Editor* editor) : BaseManager(editor, "UndoRedoManager")
 {
     qDebug() << "UndoRedoManager: created";
+    connect(&mUndoStack, &QUndoStack::indexChanged, this, [this] { emit didUpdateUndoStack(); });
 }
 
 UndoRedoManager::~UndoRedoManager()
 {
+    disconnect(&mUndoStack, nullptr, this, nullptr);
     if (!mNewBackupSystemEnabled)
     {
         clearStack();
@@ -80,22 +305,24 @@ void UndoRedoManager::onSettingChanged(SETTING setting)
 Status UndoRedoManager::load(Object* /*o*/)
 {
     clearStack();
+    auto state = editor()->snapshot();
+    mCleanSignature = !object()->isModified() && state ? state->contentSignature() : QByteArray();
     return Status::OK;
 }
 
 Status UndoRedoManager::save(Object* /*o*/)
 {
+    auto state = editor()->snapshot();
+    mCleanSignature = state ? state->contentSignature() : QByteArray();
     if (mNewBackupSystemEnabled) {
         mUndoStack.setClean();
-    } else if (!mLegacyBackupList.isEmpty() && mLegacyBackupIndex < mLegacyBackupList.count()) {
-        mLegacyBackupAtSave = mLegacyBackupList[mLegacyBackupIndex];
-    }
+    } else { mLegacyCleanIndex = mLegacyBackupIndex; }
     return Status::OK;
 }
 
 void UndoRedoManager::record(SAVESTATE_ID saveStateId, const QString& description)
 {
-    if (!mSaveStates.contains(saveStateId)) {
+    if (mDocumentEdit || !mSaveStates.contains(saveStateId)) {
         return;
     }
 
@@ -161,10 +388,7 @@ bool UndoRedoManager::hasUnsavedChanges() const
     if (mNewBackupSystemEnabled) {
         return !mUndoStack.isClean();
     } else {
-        if (mLegacyBackupIndex >= 0) {
-            return mLegacyBackupAtSave != mLegacyBackupList[mLegacyBackupIndex];
-        }
-        return false;
+        return mLegacyCleanIndex == -2 || mLegacyCleanIndex != mLegacyBackupIndex;
     }
 }
 
@@ -172,7 +396,6 @@ void UndoRedoManager::pushCommand(QUndoCommand* command)
 {
     mUndoStack.push(command);
 
-    emit didUpdateUndoStack();
 }
 
 void UndoRedoManager::removeKeyFrame(const UndoSaveState& undoState, const QString& description)
@@ -260,6 +483,7 @@ void UndoRedoManager::replaceVector(const UndoSaveState& undoState, const QStrin
 
 SAVESTATE_ID UndoRedoManager::createState(UndoRedoRecordType recordType)
 {
+    if (mDocumentEdit) { return 0; }
     int saveStateId = mSaveStateId;
     UndoSaveState* state = new UndoSaveState();
     state->recordType = recordType;
@@ -309,49 +533,33 @@ void UndoRedoManager::initCommonKeyFrameState(UndoSaveState* undoSaveState) cons
 
 QAction* UndoRedoManager::createUndoAction(QObject* parent, const QIcon& icon)
 {
-    QAction* undoAction = nullptr;
-    if (mNewBackupSystemEnabled) {
-        undoAction = mUndoStack.createUndoAction(parent);
-    } else {
-        undoAction = new QAction(parent);
-        undoAction->setText(tr("Undo"));
-        undoAction->setDisabled(true);
-    }
-    undoAction->setIcon(icon);
-
-    if (mNewBackupSystemEnabled) {
-        // The new system takes care of this automatically
-    } else {
-        connect(undoAction, &QAction::triggered, this, &UndoRedoManager::legacyUndo);
-    }
-    return undoAction;
+    auto action = new QAction(parent);
+    action->setIcon(icon);
+    connect(action, &QAction::triggered, this, [this] {
+        if (!undoLast()) { emit editor()->needDisplayInfoNoTitle(tr("Undo could not safely restore this edit. Inspect newer document changes first.")); }
+    });
+    connect(this, &UndoRedoManager::didUpdateUndoStack, action, [this, action] { updateUndoAction(action); });
+    updateUndoAction(action);
+    return action;
 }
 
 QAction* UndoRedoManager::createRedoAction(QObject* parent, const QIcon& icon)
 {
-    QAction* redoAction = nullptr;
-    if (mNewBackupSystemEnabled) {
-        redoAction = mUndoStack.createRedoAction(parent);
-    } else {
-        redoAction = new QAction(parent);
-        redoAction->setText(tr("Redo"));
-        redoAction->setDisabled(true);
-    }
-    redoAction->setIcon(icon);
-
-    if (mNewBackupSystemEnabled) {
-        // The new system takes care of this automatically
-    } else {
-        connect(redoAction, &QAction::triggered, this, &UndoRedoManager::legacyRedo);
-    }
-    return redoAction;
+    auto action = new QAction(parent);
+    action->setIcon(icon);
+    connect(action, &QAction::triggered, this, [this] {
+        if (!redoLast()) { emit editor()->needDisplayInfoNoTitle(tr("Redo could not safely restore this edit. Inspect newer document changes first.")); }
+    });
+    connect(this, &UndoRedoManager::didUpdateUndoStack, action, [this, action] { updateRedoAction(action); });
+    updateRedoAction(action);
+    return action;
 }
 
 void UndoRedoManager::updateUndoAction(QAction* undoAction)
 {
     if (mNewBackupSystemEnabled) {
-        // Not used
-        // function can be removed when we have replaced the legacy system
+        undoAction->setEnabled(mUndoStack.canUndo());
+        undoAction->setText(tr("Undo") + " " + mUndoStack.undoText());
     } else {
         if (mLegacyBackupIndex < 0)
         {
@@ -376,10 +584,10 @@ void UndoRedoManager::updateUndoAction(QAction* undoAction)
 void UndoRedoManager::updateRedoAction(QAction* redoAction)
 {
     if (mNewBackupSystemEnabled) {
-        // Not used
-        // function can be removed when we have replaced the legacy system
+        redoAction->setEnabled(mUndoStack.canRedo());
+        redoAction->setText(tr("Redo") + " " + mUndoStack.redoText());
     } else {
-        if (mLegacyBackupIndex + 2 < mLegacyBackupList.size())
+        if (canLegacyRedo())
         {
             redoAction->setText(QString("%1   %2 %3").arg(tr("Redo", "Menu item text"))
                                     .arg(mLegacyBackupIndex + 2)
@@ -396,6 +604,8 @@ void UndoRedoManager::updateRedoAction(QAction* redoAction)
 
 void UndoRedoManager::clearStack()
 {
+    mDocumentEdit.reset();
+    mLegacyCleanIndex = -1;
     if (mNewBackupSystemEnabled) {
         mUndoStack.clear();
     } else {
@@ -414,7 +624,7 @@ void UndoRedoManager::clearStack()
 void UndoRedoManager::legacyBackup(const QString& undoText)
 {
 
-    if (mNewBackupSystemEnabled) {
+    if (mNewBackupSystemEnabled || mDocumentEdit) {
         return;
     }
 
@@ -455,19 +665,10 @@ void UndoRedoManager::legacyBackup(const QString& undoText)
 
 bool UndoRedoManager::legacyBackup(int backupLayer, int backupFrame, const QString& undoText)
 {
-    if (mNewBackupSystemEnabled) {
+    if (mNewBackupSystemEnabled || mDocumentEdit) {
         return false;
     }
-
-    while (mLegacyBackupList.size() - 1 > mLegacyBackupIndex && !mLegacyBackupList.empty())
-    {
-        delete mLegacyBackupList.takeLast();
-    }
-    while (mLegacyBackupList.size() >= editor()->preference()->getInt(SETTING::UNDO_REDO_MAX_STEPS))
-    {
-        delete mLegacyBackupList.takeFirst();
-        mLegacyBackupIndex--;
-    }
+    trimLegacyRedo();
 
     Layer* layer = editor()->layers()->getLayer(backupLayer);
     int currentFrame = editor()->currentFrame();
@@ -569,7 +770,7 @@ bool UndoRedoManager::legacyBackup(int backupLayer, int backupFrame, const QStri
 
 void UndoRedoManager::sanitizeLegacyBackupElementsAfterLayerDeletion(int layerIndex)
 {
-    if (mNewBackupSystemEnabled) {
+    if (mNewBackupSystemEnabled || mDocumentEdit) {
         return;
     }
 
@@ -581,6 +782,8 @@ void UndoRedoManager::sanitizeLegacyBackupElementsAfterLayerDeletion(int layerIn
         BackupLegacySoundElement *soundElement;
         switch (backupElement->type())
         {
+        case LegacyBackupElement::DOCUMENT_CHANGE:
+            continue;
         case LegacyBackupElement::BITMAP_MODIF:
             bitmapElement = qobject_cast<BackupLegacyBitmapElement*>(backupElement);
             Q_ASSERT(bitmapElement);
@@ -627,6 +830,7 @@ void UndoRedoManager::sanitizeLegacyBackupElementsAfterLayerDeletion(int layerIn
         {
             mLegacyBackupIndex--;
         }
+        mLegacyCleanIndex = -2;
         delete mLegacyBackupList.takeAt(i);
         i--;
     }
@@ -691,6 +895,14 @@ void UndoRedoManager::legacyUndo()
 {
     if (!mLegacyBackupList.empty() && mLegacyBackupIndex > -1)
     {
+        if (mLegacyBackupList[mLegacyBackupIndex]->type() == LegacyBackupElement::DOCUMENT_CHANGE)
+        {
+            static_cast<DocumentLegacyElement*>(mLegacyBackupList[mLegacyBackupIndex])->command->undo();
+            --mLegacyBackupIndex;
+            mLegacyLastModifiedLayer = mLegacyLastModifiedFrame = -1;
+            emit didUpdateUndoStack();
+            return;
+        }
         if (mLegacyBackupIndex == mLegacyBackupList.size() - 1)
         {
             LegacyBackupElement* lastBackupElement = mLegacyBackupList[mLegacyBackupIndex];
@@ -730,11 +942,13 @@ void UndoRedoManager::legacyUndo()
 
 void UndoRedoManager::legacyRedo()
 {
-    if (!mLegacyBackupList.empty() && mLegacyBackupIndex < mLegacyBackupList.size() - 2)
+    if (canLegacyRedo())
     {
         mLegacyBackupIndex++;
 
-        mLegacyBackupList[mLegacyBackupIndex + 1]->restore(editor());
+        if (mLegacyBackupList[mLegacyBackupIndex]->type() == LegacyBackupElement::DOCUMENT_CHANGE)
+        { static_cast<DocumentLegacyElement*>(mLegacyBackupList[mLegacyBackupIndex])->command->redo(); }
+        else { mLegacyBackupList[mLegacyBackupIndex + 1]->restore(editor()); }
         emit didUpdateUndoStack();
     }
 }

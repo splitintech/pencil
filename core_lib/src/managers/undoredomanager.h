@@ -36,6 +36,7 @@ class VectorImage;
 class Camera;
 class SoundClip;
 class KeyFrame;
+class Object;
 class LegacyBackupElement;
 class UndoRedoCommand;
 
@@ -158,6 +159,15 @@ public:
 
     /** Clears the undo stack */
     void clearStack();
+    bool beginDocumentEdit();
+    bool commitDocumentEdit(const QString& description);
+    bool rollbackDocumentEdit();
+    bool documentEditActive() const { return mDocumentEdit != nullptr; }
+    bool canUndo() const;
+    bool canRedo() const;
+    bool undoLast();
+    bool redoLast();
+    void restoreDirtyState(const QByteArray& signature);
 
     // Developer note:
     // Our legacy undo/redo system is not meant to be build upon anymore.
@@ -186,6 +196,11 @@ signals:
     void didUpdateUndoStack();
 
 private:
+    void trimLegacyRedo();
+    bool canLegacyRedo() const;
+    std::unique_ptr<Object> mDocumentEdit;
+    SelectionSaveState mDocumentSelection;
+    QByteArray mCleanSignature;
 
     void replaceKeyFrame(const UndoSaveState& undoState, const QString& description);
     void replaceBitmap(const UndoSaveState& undoState, const QString& description);
@@ -211,7 +226,7 @@ private:
 
     // Legacy system
     int mLegacyBackupIndex = -1;
-    LegacyBackupElement* mLegacyBackupAtSave = nullptr;
+    int mLegacyCleanIndex = -1;
     QList<LegacyBackupElement*> mLegacyBackupList;
 
     int mLegacyLastModifiedLayer = -1;

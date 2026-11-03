@@ -21,6 +21,7 @@ GNU General Public License for more details.
 #include <QCoreApplication>
 #include <QObject>
 #include <QList>
+#include <QByteArray>
 #include <QColor>
 #include "layer.h"
 #include "colorref.h"
@@ -163,12 +164,16 @@ public:
     void setData(const ObjectData&);
     /** Deep native content copy with independent working files for export/checkpoints. */
     std::unique_ptr<Object> cloneForSnapshot() const;
+    bool prepareHistoryAssets(Object& snapshot) const;
+    bool restoreHistorySnapshot(const Object& snapshot);
+    QByteArray contentSignature() const;
 
     int totalKeyFrameCount() const;
     void updateActiveFrames(int frame) const;
     void setActiveFramePoolSize(int sizeInMB);
 
 private:
+    std::unique_ptr<Object> cloneContents(bool independentAssets) const;
     int getMaxLayerID();
 
     QString mFilePath;       //< where this object come from. (empty if new project)
@@ -177,6 +182,7 @@ private:
     QString mMainXMLFile;    //< the location of main.xml
 
     QList<Layer*> mLayers;
+    int mLastLayerId = 0;
     bool modified = false;
 
     QList<ColorRef> mPalette;

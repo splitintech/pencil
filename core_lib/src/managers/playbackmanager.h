@@ -60,6 +60,7 @@ public:
     int markOutFrame() { return mMarkOutFrame; }
 
     void setFps(int fps);
+    void setProjectFps(int fps);
     void setLooping(bool isLoop);
     void enableRangedPlayback(bool b);
     void setRangedStartFrame(int frame);
@@ -78,6 +79,7 @@ signals:
     void playStateChanged(bool isPlaying);
 
 private:
+    void changeFps(int fps, bool updateDefaults);
     void timerTick();
     void flipTimerTick();
     void playSounds(int frame);

@@ -79,7 +79,7 @@ public:
 
     bool contains(QPoint P) { return mBounds.contains(P); }
     bool contains(QPointF P) { return contains(P.toPoint()); }
-    void autoCrop();
+    void autoCrop(bool force = false);
 
     QRgb pixel(int x, int y);
     QRgb pixel(QPoint p);

@@ -18,12 +18,27 @@ GNU General Public License for more details.
 #include "catch.hpp"
 
 #include <QApplication>
+#ifdef STANLEE_AUTOMATION
+#include <QTemporaryDir>
+#include <QSettings>
+#include "pencildef.h"
+#endif
 
 int main(int argc, char* argv[])
 {
+#ifdef STANLEE_AUTOMATION
+    QTemporaryDir profile;
+    if (!profile.isValid()) { return 1; }
+    qputenv("STANLEE_SETTINGS_DIR", profile.path().toUtf8());
+#endif
     QApplication a(argc, argv);
 
     int result = Catch::Session().run(argc, argv);
 
+#ifdef STANLEE_AUTOMATION
+    QSettings settings(PENCIL2D, PENCIL2D);
+    settings.clear();
+    settings.sync();
+#endif
     return result;
 }

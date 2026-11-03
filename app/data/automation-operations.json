@@ -170,6 +170,11 @@
             "type": "integer",
             "minimum": 1,
             "maximum": 1000000
+          },
+          "camera_index": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000000
           }
         },
         "required": [],
@@ -435,7 +440,7 @@
           "name": {
             "type": "string",
             "minLength": 1,
-            "maxLength": 4096
+            "maxLength": 256
           }
         },
         "required": [
@@ -466,11 +471,16 @@
       },
       "effects": "document",
       "requires_revision": true,
-      "undo": "not_yet_supported",
+      "undo": "native_document_transaction",
       "cancellation": "before_dispatch",
       "native": "LayerManager::createLayer",
       "path_parameters": [],
-      "coverage_entries": [],
+      "coverage_entries": [
+        "app/ui/mainwindow2.ui::actionNew_Bitmap_Layer#1",
+        "app/ui/mainwindow2.ui::actionNew_Vector_Layer#1",
+        "app/ui/mainwindow2.ui::actionNew_Sound_Layer#1",
+        "app/ui/mainwindow2.ui::actionNew_Camera_Layer#1"
+      ],
       "platform_qualification": {
         "macos": "unqualified",
         "windows": "unqualified",
@@ -490,7 +500,12 @@
         "transport_failure",
         "invalid_document",
         "stale_revision",
-        "busy"
+        "busy",
+        "snapshot_failed",
+        "rollback_failed",
+        "invalid_context",
+        "invalid_selection",
+        "missing_asset"
       ]
     },
     {
@@ -661,11 +676,13 @@
       },
       "effects": "document",
       "requires_revision": true,
-      "undo": "native_history",
+      "undo": "native_document_transaction",
       "cancellation": "before_dispatch",
       "native": "Editor::addKeyFrame",
       "path_parameters": [],
-      "coverage_entries": [],
+      "coverage_entries": [
+        "app/ui/mainwindow2.ui::actionAdd_Frame#1"
+      ],
       "platform_qualification": {
         "macos": "unqualified",
         "windows": "unqualified",
@@ -685,7 +702,12 @@
         "transport_failure",
         "invalid_document",
         "stale_revision",
-        "busy"
+        "busy",
+        "snapshot_failed",
+        "rollback_failed",
+        "invalid_context",
+        "invalid_selection",
+        "missing_asset"
       ]
     },
     {
@@ -726,11 +748,13 @@
       },
       "effects": "document",
       "requires_revision": true,
-      "undo": "not_yet_supported",
+      "undo": "native_document_transaction",
       "cancellation": "before_dispatch",
       "native": "Editor::setFps",
       "path_parameters": [],
-      "coverage_entries": [],
+      "coverage_entries": [
+        "app/src/timecontrols.cpp::mFpsBox = new QSpinBox(this);#1"
+      ],
       "platform_qualification": {
         "macos": "unqualified",
         "windows": "unqualified",
@@ -750,7 +774,12 @@
         "transport_failure",
         "invalid_document",
         "stale_revision",
-        "busy"
+        "busy",
+        "snapshot_failed",
+        "rollback_failed",
+        "invalid_context",
+        "invalid_selection",
+        "missing_asset"
       ]
     },
     {
@@ -959,7 +988,7 @@
       },
       "effects": "document",
       "requires_revision": true,
-      "undo": "native_history",
+      "undo": "native_document_transaction",
       "cancellation": "before_dispatch",
       "native": "ScribbleArea::pointerPressEvent/pointerMoveEvent/pointerReleaseEvent",
       "path_parameters": [],
@@ -983,7 +1012,12 @@
         "transport_failure",
         "invalid_document",
         "stale_revision",
-        "busy"
+        "busy",
+        "snapshot_failed",
+        "rollback_failed",
+        "invalid_context",
+        "invalid_selection",
+        "missing_asset"
       ]
     },
     {
@@ -1020,7 +1054,9 @@
       "cancellation": "before_dispatch",
       "native": "UndoRedoManager::createUndoAction",
       "path_parameters": [],
-      "coverage_entries": [],
+      "coverage_entries": [
+        "app/ui/mainwindow2.ui::actionUndo#1"
+      ],
       "platform_qualification": {
         "macos": "unqualified",
         "windows": "unqualified",
@@ -1040,7 +1076,8 @@
         "transport_failure",
         "invalid_document",
         "stale_revision",
-        "busy"
+        "busy",
+        "history_conflict"
       ]
     },
     {
@@ -1077,7 +1114,9 @@
       "cancellation": "before_dispatch",
       "native": "UndoRedoManager::createRedoAction",
       "path_parameters": [],
-      "coverage_entries": [],
+      "coverage_entries": [
+        "app/ui/mainwindow2.ui::actionRedo#1"
+      ],
       "platform_qualification": {
         "macos": "unqualified",
         "windows": "unqualified",
@@ -1097,7 +1136,8 @@
         "transport_failure",
         "invalid_document",
         "stale_revision",
-        "busy"
+        "busy",
+        "history_conflict"
       ]
     },
     {
@@ -1679,6 +1719,1312 @@
         "invalid_arguments",
         "unsupported_capability",
         "transport_failure"
+      ]
+    },
+    {
+      "id": "edit.batch",
+      "input": {
+        "type": "object",
+        "properties": {
+          "operations": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 64,
+            "items": {
+              "type": "object",
+              "properties": {
+                "operation": {
+                  "type": "string"
+                },
+                "arguments": {
+                  "type": "object"
+                }
+              },
+              "required": [
+                "operation",
+                "arguments"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "operations"
+        ],
+        "additionalProperties": false
+      },
+      "output": {
+        "type": "object",
+        "properties": {
+          "session_id": {
+            "type": "string"
+          },
+          "document_id": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "session_id",
+          "document_id",
+          "revision"
+        ]
+      },
+      "effects": "document",
+      "requires_revision": true,
+      "undo": "native_document_transaction",
+      "cancellation": "before_dispatch",
+      "native": "Editor::setFps",
+      "path_parameters": [],
+      "coverage_entries": [],
+      "platform_qualification": {
+        "macos": "unqualified",
+        "windows": "unqualified",
+        "linux": "unqualified"
+      },
+      "preconditions": [
+        "authenticated_session",
+        "current_document_id",
+        "expected_revision",
+        "editor_idle"
+      ],
+      "failures": [
+        "unauthorized",
+        "protocol_mismatch",
+        "invalid_arguments",
+        "unsupported_capability",
+        "transport_failure",
+        "invalid_document",
+        "stale_revision",
+        "busy",
+        "unsupported_atomic_operation",
+        "history_conflict",
+        "snapshot_failed",
+        "rollback_failed",
+        "invalid_context",
+        "invalid_selection",
+        "missing_asset"
+      ]
+    },
+    {
+      "id": "layer.update",
+      "input": {
+        "type": "object",
+        "properties": {
+          "index": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000000
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "visible": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "index"
+        ],
+        "additionalProperties": false,
+        "minProperties": 2
+      },
+      "output": {
+        "type": "object",
+        "properties": {
+          "session_id": {
+            "type": "string"
+          },
+          "document_id": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "session_id",
+          "document_id",
+          "revision"
+        ]
+      },
+      "effects": "document",
+      "requires_revision": true,
+      "undo": "native_document_transaction",
+      "cancellation": "before_dispatch",
+      "native": "Editor::setFps",
+      "path_parameters": [],
+      "coverage_entries": [],
+      "platform_qualification": {
+        "macos": "unqualified",
+        "windows": "unqualified",
+        "linux": "unqualified"
+      },
+      "preconditions": [
+        "authenticated_session",
+        "current_document_id",
+        "expected_revision",
+        "editor_idle"
+      ],
+      "failures": [
+        "unauthorized",
+        "protocol_mismatch",
+        "invalid_arguments",
+        "unsupported_capability",
+        "transport_failure",
+        "invalid_document",
+        "stale_revision",
+        "busy",
+        "invalid_context",
+        "invalid_selection",
+        "history_conflict",
+        "snapshot_failed",
+        "rollback_failed",
+        "missing_asset"
+      ]
+    },
+    {
+      "id": "layer.delete",
+      "input": {
+        "type": "object",
+        "properties": {
+          "index": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000000
+          }
+        },
+        "required": [
+          "index"
+        ],
+        "additionalProperties": false
+      },
+      "output": {
+        "type": "object",
+        "properties": {
+          "session_id": {
+            "type": "string"
+          },
+          "document_id": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "session_id",
+          "document_id",
+          "revision"
+        ]
+      },
+      "effects": "document",
+      "requires_revision": true,
+      "undo": "native_document_transaction",
+      "cancellation": "before_dispatch",
+      "native": "Editor::setFps",
+      "path_parameters": [],
+      "coverage_entries": [
+        "app/ui/mainwindow2.ui::actionDelete_Current_Layer#1"
+      ],
+      "platform_qualification": {
+        "macos": "unqualified",
+        "windows": "unqualified",
+        "linux": "unqualified"
+      },
+      "preconditions": [
+        "authenticated_session",
+        "current_document_id",
+        "expected_revision",
+        "editor_idle"
+      ],
+      "failures": [
+        "unauthorized",
+        "protocol_mismatch",
+        "invalid_arguments",
+        "unsupported_capability",
+        "transport_failure",
+        "invalid_document",
+        "stale_revision",
+        "busy",
+        "invalid_context",
+        "invalid_selection",
+        "history_conflict",
+        "snapshot_failed",
+        "rollback_failed",
+        "missing_asset"
+      ]
+    },
+    {
+      "id": "layer.duplicate",
+      "input": {
+        "type": "object",
+        "properties": {
+          "index": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000000
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        "required": [
+          "index",
+          "name"
+        ],
+        "additionalProperties": false
+      },
+      "output": {
+        "type": "object",
+        "properties": {
+          "session_id": {
+            "type": "string"
+          },
+          "document_id": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "session_id",
+          "document_id",
+          "revision"
+        ]
+      },
+      "effects": "document",
+      "requires_revision": true,
+      "undo": "native_document_transaction",
+      "cancellation": "before_dispatch",
+      "native": "Editor::setFps",
+      "path_parameters": [],
+      "coverage_entries": [],
+      "platform_qualification": {
+        "macos": "unqualified",
+        "windows": "unqualified",
+        "linux": "unqualified"
+      },
+      "preconditions": [
+        "authenticated_session",
+        "current_document_id",
+        "expected_revision",
+        "editor_idle"
+      ],
+      "failures": [
+        "unauthorized",
+        "protocol_mismatch",
+        "invalid_arguments",
+        "unsupported_capability",
+        "transport_failure",
+        "invalid_document",
+        "stale_revision",
+        "busy",
+        "invalid_context",
+        "invalid_selection",
+        "history_conflict",
+        "snapshot_failed",
+        "rollback_failed",
+        "missing_asset"
+      ]
+    },
+    {
+      "id": "layer.reorder",
+      "input": {
+        "type": "object",
+        "properties": {
+          "index": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000000
+          },
+          "target": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000000
+          }
+        },
+        "required": [
+          "index",
+          "target"
+        ],
+        "additionalProperties": false
+      },
+      "output": {
+        "type": "object",
+        "properties": {
+          "session_id": {
+            "type": "string"
+          },
+          "document_id": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "session_id",
+          "document_id",
+          "revision"
+        ]
+      },
+      "effects": "document",
+      "requires_revision": true,
+      "undo": "native_document_transaction",
+      "cancellation": "before_dispatch",
+      "native": "Editor::setFps",
+      "path_parameters": [],
+      "coverage_entries": [],
+      "platform_qualification": {
+        "macos": "unqualified",
+        "windows": "unqualified",
+        "linux": "unqualified"
+      },
+      "preconditions": [
+        "authenticated_session",
+        "current_document_id",
+        "expected_revision",
+        "editor_idle"
+      ],
+      "failures": [
+        "unauthorized",
+        "protocol_mismatch",
+        "invalid_arguments",
+        "unsupported_capability",
+        "transport_failure",
+        "invalid_document",
+        "stale_revision",
+        "busy",
+        "invalid_context",
+        "invalid_selection",
+        "history_conflict",
+        "snapshot_failed",
+        "rollback_failed",
+        "missing_asset"
+      ]
+    },
+    {
+      "id": "timeline.duplicate_key",
+      "input": {
+        "type": "object",
+        "properties": {
+          "index": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000000
+          },
+          "from": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000000
+          },
+          "to": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000000
+          }
+        },
+        "required": [
+          "index",
+          "from",
+          "to"
+        ],
+        "additionalProperties": false
+      },
+      "output": {
+        "type": "object",
+        "properties": {
+          "session_id": {
+            "type": "string"
+          },
+          "document_id": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "session_id",
+          "document_id",
+          "revision"
+        ]
+      },
+      "effects": "document",
+      "requires_revision": true,
+      "undo": "native_document_transaction",
+      "cancellation": "before_dispatch",
+      "native": "Editor::setFps",
+      "path_parameters": [],
+      "coverage_entries": [
+        "app/ui/mainwindow2.ui::actionDuplicate_Frame#1"
+      ],
+      "platform_qualification": {
+        "macos": "unqualified",
+        "windows": "unqualified",
+        "linux": "unqualified"
+      },
+      "preconditions": [
+        "authenticated_session",
+        "current_document_id",
+        "expected_revision",
+        "editor_idle"
+      ],
+      "failures": [
+        "unauthorized",
+        "protocol_mismatch",
+        "invalid_arguments",
+        "unsupported_capability",
+        "transport_failure",
+        "invalid_document",
+        "stale_revision",
+        "busy",
+        "invalid_context",
+        "invalid_selection",
+        "history_conflict",
+        "snapshot_failed",
+        "rollback_failed",
+        "missing_asset"
+      ]
+    },
+    {
+      "id": "timeline.move_key",
+      "input": {
+        "type": "object",
+        "properties": {
+          "index": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000000
+          },
+          "from": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000000
+          },
+          "to": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000000
+          },
+          "swap": {
+            "type": "boolean",
+            "description": "Allow native swapping when an exact destination key exists; default false."
+          }
+        },
+        "required": [
+          "index",
+          "from",
+          "to"
+        ],
+        "additionalProperties": false
+      },
+      "output": {
+        "type": "object",
+        "properties": {
+          "session_id": {
+            "type": "string"
+          },
+          "document_id": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "session_id",
+          "document_id",
+          "revision"
+        ]
+      },
+      "effects": "document",
+      "requires_revision": true,
+      "undo": "native_document_transaction",
+      "cancellation": "before_dispatch",
+      "native": "Editor::setFps",
+      "path_parameters": [],
+      "coverage_entries": [],
+      "platform_qualification": {
+        "macos": "unqualified",
+        "windows": "unqualified",
+        "linux": "unqualified"
+      },
+      "preconditions": [
+        "authenticated_session",
+        "current_document_id",
+        "expected_revision",
+        "editor_idle"
+      ],
+      "failures": [
+        "unauthorized",
+        "protocol_mismatch",
+        "invalid_arguments",
+        "unsupported_capability",
+        "transport_failure",
+        "invalid_document",
+        "stale_revision",
+        "busy",
+        "invalid_context",
+        "invalid_selection",
+        "history_conflict",
+        "snapshot_failed",
+        "rollback_failed",
+        "missing_asset"
+      ]
+    },
+    {
+      "id": "timeline.remove_keys",
+      "input": {
+        "type": "object",
+        "properties": {
+          "index": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000000
+          },
+          "frames": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000000
+            },
+            "minItems": 1,
+            "maxItems": 4096,
+            "uniqueItems": true
+          }
+        },
+        "required": [
+          "index",
+          "frames"
+        ],
+        "additionalProperties": false
+      },
+      "output": {
+        "type": "object",
+        "properties": {
+          "session_id": {
+            "type": "string"
+          },
+          "document_id": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "session_id",
+          "document_id",
+          "revision"
+        ]
+      },
+      "effects": "document",
+      "requires_revision": true,
+      "undo": "native_document_transaction",
+      "cancellation": "before_dispatch",
+      "native": "Editor::setFps",
+      "path_parameters": [],
+      "coverage_entries": [
+        "app/ui/mainwindow2.ui::actionRemove_Frame#1",
+        "app/ui/mainwindow2.ui::actionRemove_Frames#1"
+      ],
+      "platform_qualification": {
+        "macos": "unqualified",
+        "windows": "unqualified",
+        "linux": "unqualified"
+      },
+      "preconditions": [
+        "authenticated_session",
+        "current_document_id",
+        "expected_revision",
+        "editor_idle"
+      ],
+      "failures": [
+        "unauthorized",
+        "protocol_mismatch",
+        "invalid_arguments",
+        "unsupported_capability",
+        "transport_failure",
+        "invalid_document",
+        "stale_revision",
+        "busy",
+        "invalid_context",
+        "invalid_selection",
+        "history_conflict",
+        "snapshot_failed",
+        "rollback_failed",
+        "missing_asset"
+      ]
+    },
+    {
+      "id": "timeline.reverse",
+      "input": {
+        "type": "object",
+        "properties": {
+          "index": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000000
+          },
+          "frames": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000000
+            },
+            "minItems": 1,
+            "maxItems": 4096,
+            "uniqueItems": true
+          }
+        },
+        "required": [
+          "index",
+          "frames"
+        ],
+        "additionalProperties": false
+      },
+      "output": {
+        "type": "object",
+        "properties": {
+          "session_id": {
+            "type": "string"
+          },
+          "document_id": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "session_id",
+          "document_id",
+          "revision"
+        ]
+      },
+      "effects": "document",
+      "requires_revision": true,
+      "undo": "native_document_transaction",
+      "cancellation": "before_dispatch",
+      "native": "Editor::setFps",
+      "path_parameters": [],
+      "coverage_entries": [
+        "app/ui/mainwindow2.ui::actionReverse_Frames_Order#1"
+      ],
+      "platform_qualification": {
+        "macos": "unqualified",
+        "windows": "unqualified",
+        "linux": "unqualified"
+      },
+      "preconditions": [
+        "authenticated_session",
+        "current_document_id",
+        "expected_revision",
+        "editor_idle"
+      ],
+      "failures": [
+        "unauthorized",
+        "protocol_mismatch",
+        "invalid_arguments",
+        "unsupported_capability",
+        "transport_failure",
+        "invalid_document",
+        "stale_revision",
+        "busy",
+        "invalid_context",
+        "invalid_selection",
+        "history_conflict",
+        "snapshot_failed",
+        "rollback_failed",
+        "missing_asset"
+      ]
+    },
+    {
+      "id": "timeline.select_keys",
+      "input": {
+        "type": "object",
+        "properties": {
+          "index": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000000
+          },
+          "frames": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000000
+            },
+            "minItems": 1,
+            "maxItems": 4096,
+            "uniqueItems": true
+          }
+        },
+        "required": [
+          "index",
+          "frames"
+        ],
+        "additionalProperties": false
+      },
+      "output": {
+        "type": "object",
+        "properties": {
+          "session_id": {
+            "type": "string"
+          },
+          "document_id": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "session_id",
+          "document_id",
+          "revision"
+        ]
+      },
+      "effects": "view",
+      "requires_revision": true,
+      "undo": "not_applicable",
+      "cancellation": "before_dispatch",
+      "native": "Editor::setFps",
+      "path_parameters": [],
+      "coverage_entries": [],
+      "platform_qualification": {
+        "macos": "unqualified",
+        "windows": "unqualified",
+        "linux": "unqualified"
+      },
+      "preconditions": [
+        "authenticated_session",
+        "current_document_id",
+        "expected_revision",
+        "editor_idle"
+      ],
+      "failures": [
+        "unauthorized",
+        "protocol_mismatch",
+        "invalid_arguments",
+        "unsupported_capability",
+        "transport_failure",
+        "invalid_document",
+        "stale_revision",
+        "busy",
+        "invalid_context",
+        "invalid_selection",
+        "history_conflict",
+        "snapshot_failed",
+        "rollback_failed"
+      ]
+    },
+    {
+      "id": "timeline.expose",
+      "input": {
+        "type": "object",
+        "properties": {
+          "index": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000000
+          },
+          "frames": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000000
+            },
+            "minItems": 1,
+            "maxItems": 4096,
+            "uniqueItems": true
+          },
+          "delta": {
+            "type": "integer",
+            "minimum": -1000,
+            "maximum": 1000
+          }
+        },
+        "required": [
+          "index",
+          "frames",
+          "delta"
+        ],
+        "additionalProperties": false
+      },
+      "output": {
+        "type": "object",
+        "properties": {
+          "session_id": {
+            "type": "string"
+          },
+          "document_id": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "session_id",
+          "document_id",
+          "revision"
+        ]
+      },
+      "effects": "document",
+      "requires_revision": true,
+      "undo": "native_document_transaction",
+      "cancellation": "before_dispatch",
+      "native": "Editor::setFps",
+      "path_parameters": [],
+      "coverage_entries": [
+        "app/ui/mainwindow2.ui::actionAdd_Frame_Exposure#1",
+        "app/ui/mainwindow2.ui::actionSubtract_Frame_Exposure#1"
+      ],
+      "platform_qualification": {
+        "macos": "unqualified",
+        "windows": "unqualified",
+        "linux": "unqualified"
+      },
+      "preconditions": [
+        "authenticated_session",
+        "current_document_id",
+        "expected_revision",
+        "editor_idle"
+      ],
+      "failures": [
+        "unauthorized",
+        "protocol_mismatch",
+        "invalid_arguments",
+        "unsupported_capability",
+        "transport_failure",
+        "invalid_document",
+        "stale_revision",
+        "busy",
+        "invalid_context",
+        "invalid_selection",
+        "history_conflict",
+        "snapshot_failed",
+        "rollback_failed",
+        "missing_asset"
+      ]
+    },
+    {
+      "id": "content.opacity",
+      "input": {
+        "type": "object",
+        "properties": {
+          "index": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000000
+          },
+          "frames": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000000
+            },
+            "minItems": 1,
+            "maxItems": 4096,
+            "uniqueItems": true
+          },
+          "opacity": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          }
+        },
+        "required": [
+          "index",
+          "frames",
+          "opacity"
+        ],
+        "additionalProperties": false
+      },
+      "output": {
+        "type": "object",
+        "properties": {
+          "session_id": {
+            "type": "string"
+          },
+          "document_id": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "session_id",
+          "document_id",
+          "revision"
+        ]
+      },
+      "effects": "document",
+      "requires_revision": true,
+      "undo": "native_document_transaction",
+      "cancellation": "before_dispatch",
+      "native": "Editor::setFps",
+      "path_parameters": [],
+      "coverage_entries": [
+        "app/ui/mainwindow2.ui::actionChangeLayerOpacity#1",
+        "app/ui/layeropacitydialog.ui::chooseOpacitySlider#1",
+        "app/ui/layeropacitydialog.ui::chooseOpacitySpinBox#1",
+        "app/ui/layeropacitydialog.ui::rbActiveKeyframe#1",
+        "app/ui/layeropacitydialog.ui::rbSelectedKeyframes#1",
+        "app/ui/layeropacitydialog.ui::rbActiveLayer#1"
+      ],
+      "platform_qualification": {
+        "macos": "unqualified",
+        "windows": "unqualified",
+        "linux": "unqualified"
+      },
+      "preconditions": [
+        "authenticated_session",
+        "current_document_id",
+        "expected_revision",
+        "editor_idle"
+      ],
+      "failures": [
+        "unauthorized",
+        "protocol_mismatch",
+        "invalid_arguments",
+        "unsupported_capability",
+        "transport_failure",
+        "invalid_document",
+        "stale_revision",
+        "busy",
+        "invalid_context",
+        "invalid_selection",
+        "history_conflict",
+        "snapshot_failed",
+        "rollback_failed",
+        "missing_asset"
+      ]
+    },
+    {
+      "id": "camera.configure",
+      "input": {
+        "type": "object",
+        "properties": {
+          "index": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000000
+          },
+          "width": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 8192
+          },
+          "height": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 8192
+          }
+        },
+        "required": [
+          "index",
+          "width",
+          "height"
+        ],
+        "additionalProperties": false
+      },
+      "output": {
+        "type": "object",
+        "properties": {
+          "session_id": {
+            "type": "string"
+          },
+          "document_id": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "session_id",
+          "document_id",
+          "revision"
+        ]
+      },
+      "effects": "document",
+      "requires_revision": true,
+      "undo": "native_document_transaction",
+      "cancellation": "before_dispatch",
+      "native": "Editor::setFps",
+      "path_parameters": [],
+      "coverage_entries": [],
+      "platform_qualification": {
+        "macos": "unqualified",
+        "windows": "unqualified",
+        "linux": "unqualified"
+      },
+      "preconditions": [
+        "authenticated_session",
+        "current_document_id",
+        "expected_revision",
+        "editor_idle"
+      ],
+      "failures": [
+        "unauthorized",
+        "protocol_mismatch",
+        "invalid_arguments",
+        "unsupported_capability",
+        "transport_failure",
+        "invalid_document",
+        "stale_revision",
+        "busy",
+        "invalid_context",
+        "invalid_selection",
+        "history_conflict",
+        "snapshot_failed",
+        "rollback_failed",
+        "missing_asset"
+      ]
+    },
+    {
+      "id": "camera.key",
+      "input": {
+        "type": "object",
+        "properties": {
+          "index": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000000
+          },
+          "frame": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000000
+          },
+          "x": {
+            "type": "number",
+            "minimum": -100000,
+            "maximum": 100000
+          },
+          "y": {
+            "type": "number",
+            "minimum": -100000,
+            "maximum": 100000
+          },
+          "rotation": {
+            "type": "number",
+            "minimum": -360,
+            "maximum": 360
+          },
+          "scale": {
+            "type": "number",
+            "minimum": 0.01,
+            "maximum": 100
+          },
+          "easing": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 40,
+            "description": "Native interpolation for the segment starting at this key: 0=linear, 1=inquad, 2=outquad, 3=inoutquad, 4=outinquad, 5=incubic, 6=outcubic, 7=inoutcubic, 8=outincubic, 9=inquart, 10=outquart, 11=inoutquart, 12=outinquart, 13=inquint, 14=outquint, 15=inoutquint, 16=outinquint, 17=insine, 18=outsine, 19=inoutsine, 20=outinsine, 21=inexpo, 22=outexpo, 23=inoutexpo, 24=outinexpo, 25=incirc, 26=outcirc, 27=inoutcirc, 28=outincirc, 29=inelastic, 30=outelastic, 31=inoutelastic, 32=outinelastic, 33=inback, 34=outback, 35=inoutback, 36=outinback, 37=inbounce, 38=outbounce, 39=inoutbounce, 40=outinbounce."
+          },
+          "overwrite": {
+            "type": "boolean"
+          },
+          "path_x": {
+            "type": "number",
+            "minimum": -100000,
+            "maximum": 100000
+          },
+          "path_y": {
+            "type": "number",
+            "minimum": -100000,
+            "maximum": 100000
+          },
+          "path_moved": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "index",
+          "frame",
+          "x",
+          "y",
+          "rotation",
+          "scale"
+        ],
+        "additionalProperties": false,
+        "dependentRequired": {
+          "path_x": [
+            "path_y"
+          ],
+          "path_y": [
+            "path_x"
+          ]
+        }
+      },
+      "output": {
+        "type": "object",
+        "properties": {
+          "session_id": {
+            "type": "string"
+          },
+          "document_id": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "session_id",
+          "document_id",
+          "revision"
+        ]
+      },
+      "effects": "document",
+      "requires_revision": true,
+      "undo": "native_document_transaction",
+      "cancellation": "before_dispatch",
+      "native": "Editor::setFps",
+      "path_parameters": [],
+      "coverage_entries": [],
+      "platform_qualification": {
+        "macos": "unqualified",
+        "windows": "unqualified",
+        "linux": "unqualified"
+      },
+      "preconditions": [
+        "authenticated_session",
+        "current_document_id",
+        "expected_revision",
+        "editor_idle"
+      ],
+      "failures": [
+        "unauthorized",
+        "protocol_mismatch",
+        "invalid_arguments",
+        "unsupported_capability",
+        "transport_failure",
+        "invalid_document",
+        "stale_revision",
+        "busy",
+        "invalid_context",
+        "invalid_selection",
+        "history_conflict",
+        "snapshot_failed",
+        "rollback_failed",
+        "missing_asset"
+      ]
+    },
+    {
+      "id": "camera.reset",
+      "input": {
+        "type": "object",
+        "properties": {
+          "index": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000000
+          },
+          "frame": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000000
+          },
+          "field": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 6,
+            "description": "0=reset transform, 1=reset translation, 2=reset scale, 3=reset rotation, 4=align next key horizontally, 5=align next key vertically, 6=hold transform at next key. Alignment/hold require a following key."
+          }
+        },
+        "required": [
+          "index",
+          "frame",
+          "field"
+        ],
+        "additionalProperties": false
+      },
+      "output": {
+        "type": "object",
+        "properties": {
+          "session_id": {
+            "type": "string"
+          },
+          "document_id": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "session_id",
+          "document_id",
+          "revision"
+        ]
+      },
+      "effects": "document",
+      "requires_revision": true,
+      "undo": "native_document_transaction",
+      "cancellation": "before_dispatch",
+      "native": "Editor::setFps",
+      "path_parameters": [],
+      "coverage_entries": [],
+      "platform_qualification": {
+        "macos": "unqualified",
+        "windows": "unqualified",
+        "linux": "unqualified"
+      },
+      "preconditions": [
+        "authenticated_session",
+        "current_document_id",
+        "expected_revision",
+        "editor_idle"
+      ],
+      "failures": [
+        "unauthorized",
+        "protocol_mismatch",
+        "invalid_arguments",
+        "unsupported_capability",
+        "transport_failure",
+        "invalid_document",
+        "stale_revision",
+        "busy",
+        "invalid_context",
+        "invalid_selection",
+        "history_conflict",
+        "snapshot_failed",
+        "rollback_failed",
+        "missing_asset"
       ]
     }
   ]

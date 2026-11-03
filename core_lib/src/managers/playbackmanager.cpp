@@ -223,13 +223,20 @@ void PlaybackManager::playScrub(int frame)
     }
 }
 
-void PlaybackManager::setFps(int fps)
+void PlaybackManager::setFps(int fps) { changeFps(fps, true); }
+
+void PlaybackManager::setProjectFps(int fps) { changeFps(fps, false); }
+
+void PlaybackManager::changeFps(int fps, bool updateDefaults)
 {
     if (mFps != fps)
     {
         mFps = fps;
-        QSettings settings (PENCIL2D, PENCIL2D);
-        settings.setValue(SETTING_FPS, fps);
+        if (updateDefaults)
+        {
+            QSettings settings (PENCIL2D, PENCIL2D);
+            settings.setValue(SETTING_FPS, fps);
+        }
         emit fpsChanged(mFps);
 
         // Update key-frame lengths of sound layers,

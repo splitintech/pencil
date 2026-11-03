@@ -30,9 +30,9 @@ Camera::Camera(QPointF translation, qreal rotation, qreal scaling)
 }
 
 Camera::Camera(QPointF translation, qreal rotation, qreal scaling, CameraEasingType type)
+    : Camera(translation, rotation, scaling)
 {
     mEasingType = type;
-    Camera(translation, rotation, scaling);
 }
 
 Camera::Camera(const Camera& c2) : KeyFrame(c2)
@@ -41,6 +41,7 @@ Camera::Camera(const Camera& c2) : KeyFrame(c2)
     mRotate = c2.mRotate;
     mScale = c2.mScale;
     mPathControlPoint = c2.mPathControlPoint;
+    mPathControlPointMoved = c2.mPathControlPointMoved;
     mEasingType = c2.mEasingType;
     mNeedUpdateView = true;
 }
@@ -60,6 +61,7 @@ void Camera::assign(const Camera& rhs)
     mRotate = rhs.mRotate;
     mScale = rhs.mScale;
     mPathControlPoint = rhs.mPathControlPoint;
+    mPathControlPointMoved = rhs.mPathControlPointMoved;
     mEasingType = rhs.mEasingType;
 
     mNeedUpdateView = true;

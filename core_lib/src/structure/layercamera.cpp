@@ -408,7 +408,8 @@ void LayerCamera::resetCameraAtFrame(CameraFieldOption type, int frame) const
     }
 
     if (type != CameraFieldOption::RESET_SCALING && type != CameraFieldOption::RESET_ROTATION) {
-        setPathMovedAtFrame(frame - 1, false);
+        auto previous = getLastCameraAtFrame(frame - 1);
+        if (previous) { previous->setPathControlPointMoved(false); }
     }
 
     camera->updateViewTransform();
@@ -623,7 +624,7 @@ void LayerCamera::loadDomElement(const QDomElement& element, QString dataDirPath
                 qreal pathX = imageElement.attribute("pathCPX", "0").toDouble();
                 qreal pathY = imageElement.attribute("pathCPY", "0").toDouble();
 
-                bool pathMoved = pathX != 0 || pathY != 0;
+                bool pathMoved = imageElement.hasAttribute("pathCPX") && imageElement.hasAttribute("pathCPY");
 
                 loadImageAtFrame(frame, dx, dy, rotate, scale, easing, QPointF(pathX, pathY), pathMoved);
             }

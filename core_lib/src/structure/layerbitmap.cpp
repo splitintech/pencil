@@ -84,9 +84,26 @@ Status LayerBitmap::saveKeyFrameFile(KeyFrame* keyframe, QString path)
         return Status::SAFE;
     }
 
+    if (!bitmapImage->isLoaded() && !bitmapImage->fileName().isEmpty())
+    {
+        bitmapImage->loadFile();
+        if (!bitmapImage->isLoaded()) { return Status::FAIL; }
+    }
+    // XML generation asks for topLeft(), which crops the image. Crop before
+    // writing pixels so the stored bounds and PNG describe the same content.
+    bitmapImage->enableAutoCrop(true);
+    bitmapImage->autoCrop(true);
     bitmapImage->setFileName(strFilePath);
-
-    Status st = bitmapImage->writeFile(strFilePath);
+    Status st = Status::OK;
+    if (bitmapImage->image()->isNull())
+    {
+        // An explicit transparent asset distinguishes a valid blank key from
+        // missing/corrupt backing data when preparing independent snapshots.
+        QImage blank(1, 1, QImage::Format_ARGB32_Premultiplied);
+        blank.fill(Qt::transparent);
+        st = blank.save(strFilePath) ? Status::OK : Status::FAIL;
+    }
+    else { st = bitmapImage->writeFile(strFilePath); }
     if (!st.ok())
     {
         bitmapImage->setFileName("");

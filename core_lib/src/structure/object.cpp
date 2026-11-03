@@ -27,6 +27,8 @@ GNU General Public License for more details.
 #include <QDateTime>
 #include <QImageWriter>
 #include <QRegularExpression>
+#include <QCryptographicHash>
+#include <QXmlStreamWriter>
 
 #include "layer.h"
 #include "layerbitmap.h"
@@ -60,10 +62,17 @@ Object::~Object()
 
 std::unique_ptr<Object> Object::cloneForSnapshot() const
 {
+    return cloneContents(true);
+}
+
+std::unique_ptr<Object> Object::cloneContents(bool independentAssets) const
+{
     std::unique_ptr<Object> result(new Object);
-    result->createWorkingDir();
+    if (independentAssets) { result->createWorkingDir(); }
     result->mPalette = mPalette;
     result->mData = mData;
+    result->modified = modified;
+    result->mLastLayerId = mLastLayerId;
     for (Layer* source : mLayers)
     {
         std::unique_ptr<Layer> target;
@@ -76,7 +85,10 @@ std::unique_ptr<Object> Object::cloneForSnapshot() const
         default: return nullptr;
         }
         QDomDocument document;
-        QDomElement metadata = source->createDomElement(document);
+        // Bitmap serialization calls topLeft(), which crops the source image.
+        // Base metadata is sufficient here; keys are copied independently.
+        QDomElement metadata = source->type() == Layer::BITMAP
+            ? source->createBaseDomElement(document) : source->createDomElement(document);
         while (!metadata.firstChild().isNull()) { metadata.removeChild(metadata.firstChild()); }
         target->loadDomElement(metadata, result->dataDir(), [] {});
         bool valid = true;
@@ -90,11 +102,13 @@ std::unique_ptr<Object> Object::cloneForSnapshot() const
             {
                 copied->loadFile();
                 if (!key->fileName().isEmpty() && !copied->isLoaded()) { valid = false; return; }
+                static_cast<BitmapImage*>(copied.get())->enableAutoCrop(true);
+                static_cast<BitmapImage*>(copied.get())->autoCrop(true);
             }
             if (source->type() == Layer::SOUND)
             {
                 static_cast<SoundClip*>(copied.get())->setDuration(static_cast<SoundClip*>(key)->duration());
-                if (!key->fileName().isEmpty())
+                if (independentAssets && !key->fileName().isEmpty())
                 {
                     QString path = QDir(result->dataDir()).filePath(QString("snapshot-sound-%1-%2.%3")
                         .arg(source->id()).arg(key->pos()).arg(QFileInfo(key->fileName()).suffix()));
@@ -110,9 +124,116 @@ std::unique_ptr<Object> Object::cloneForSnapshot() const
             target->addOrReplaceKeyFrame(key->pos(), copied.release());
         });
         if (!valid) { return nullptr; }
-        result->addLayer(target.release());
+        for (int frame : source->selectedKeyFramesByLast()) { target->setFrameSelected(frame, true); }
+        result->mLayers.append(target.release());
     }
     return result;
+}
+
+bool Object::prepareHistoryAssets(Object& snapshot) const
+{
+    // History restoration performs no file writes. Cache immutable sound bytes
+    // in the live working directory, whose lifetime includes all native history.
+    for (Layer* layer : snapshot.mLayers)
+    {
+        if (layer->type() != Layer::SOUND) { continue; }
+        bool valid = true;
+        layer->foreachKeyFrame([&](KeyFrame* key) {
+            if (key->fileName().isEmpty()) { return; }
+            QFile input(key->fileName());
+            QCryptographicHash hash(QCryptographicHash::Sha256);
+            if (!input.open(QIODevice::ReadOnly) || !hash.addData(&input)) { valid = false; return; }
+            QString name = "history-sound-" + QString::fromLatin1(hash.result().toHex());
+            QString suffix = QFileInfo(key->fileName()).suffix();
+            if (!suffix.isEmpty()) { name += "." + suffix; }
+            QString path = QDir(dataDir()).filePath(name);
+            if (QFileInfo::exists(path))
+            {
+                QFile existing(path);
+                QCryptographicHash check(QCryptographicHash::Sha256);
+                if (!existing.open(QIODevice::ReadOnly) || !check.addData(&existing) || check.result() != hash.result())
+                { valid = false; return; }
+            }
+            else if (!QFile::copy(key->fileName(), path)) { valid = false; return; }
+            key->setFileName(path);
+        });
+        if (!valid) { return false; }
+    }
+    return true;
+}
+
+bool Object::restoreHistorySnapshot(const Object& snapshot)
+{
+    auto prepared = snapshot.cloneContents(false);
+    if (!prepared || prepared->mLayers.isEmpty()) { return false; }
+    // Keep this Object and its working directory alive: existing human bitmap
+    // history can refer to backing files there. Only document content changes.
+    mActiveFramePool->clear();
+    mLastLayerId = qMax(mLastLayerId, getMaxLayerID());
+    qDeleteAll(mLayers);
+    mLayers = std::move(prepared->mLayers);
+    prepared->mLayers.clear();
+    mPalette = prepared->mPalette;
+    mData = prepared->mData;
+    modified = prepared->modified;
+    mLastLayerId = qMax(mLastLayerId, prepared->mLastLayerId);
+    return true;
+}
+
+QByteArray Object::contentSignature() const
+{
+    QCryptographicHash hash(QCryptographicHash::Sha256);
+    QDomDocument document;
+    auto root = saveXML(document);
+    document.appendChild(root);
+    for (const QString& tag : {QString("image"), QString("sound")})
+    {
+        auto nodes = root.elementsByTagName(tag);
+        for (int i = 0; i < nodes.size(); ++i) { nodes.at(i).toElement().removeAttribute("src"); }
+    }
+    hash.addData(document.toByteArray(-1));
+    hash.addData(QByteArray::number(mData.getFrameRate()) + ";" + QByteArray::number(mData.isLooping()) + ";" +
+                 QByteArray::number(mData.isRangedPlayback()) + ";" + QByteArray::number(mData.getMarkInFrameNumber()) + ";" +
+                 QByteArray::number(mData.getMarkOutFrameNumber()));
+    for (const auto& color : mPalette)
+    {
+        auto name = color.name.toUtf8();
+        hash.addData(QByteArray::number(name.size()) + ":" + name + ";" + QByteArray::number(color.color.rgba()) + ";");
+    }
+    bool valid = true;
+    for (Layer* layer : mLayers)
+    {
+        layer->foreachKeyFrame([&](KeyFrame* key) {
+            QCryptographicHash content(QCryptographicHash::Sha256);
+            if (layer->type() == Layer::BITMAP)
+            {
+                auto bitmap = static_cast<BitmapImage*>(key);
+                auto image = bitmap->image()->convertToFormat(QImage::Format_RGBA8888);
+                content.addData(QByteArray::number(image.width()) + ";" + QByteArray::number(image.height()) + ";");
+                const char* bytes = reinterpret_cast<const char*>(image.constBits());
+                qint64 remaining = image.sizeInBytes();
+                while (remaining > 0)
+                {
+                    int count = static_cast<int>(qMin<qint64>(remaining, 65536));
+                    content.addData(bytes, count); bytes += count; remaining -= count;
+                }
+            }
+            else if (layer->type() == Layer::VECTOR)
+            {
+                QByteArray bytes;
+                QXmlStreamWriter xml(&bytes);
+                if (!static_cast<VectorImage*>(key)->createDomElement(xml).ok()) { valid = false; }
+                content.addData(bytes);
+            }
+            else if (layer->type() == Layer::SOUND && !key->fileName().isEmpty())
+            {
+                QFile file(key->fileName());
+                if (!file.open(QIODevice::ReadOnly) || !content.addData(&file)) { valid = false; }
+            }
+            hash.addData(content.result());
+        });
+    }
+    return valid ? hash.result() : QByteArray();
 }
 
 void Object::init()
@@ -281,7 +402,7 @@ int Object::getMaxLayerID()
 
 int Object::getUniqueLayerID()
 {
-    return 1 + getMaxLayerID();
+    return qMax(mLastLayerId, getMaxLayerID()) + 1;
 }
 
 Layer* Object::getLayer(int i) const
@@ -352,6 +473,7 @@ Layer* Object::takeLayer(int layerId)
 
     if (index == -1) { return nullptr; }
 
+    mLastLayerId = qMax(mLastLayerId, getMaxLayerID());
     Layer* layer = mLayers.takeAt(index);
     return layer;
 }
@@ -416,6 +538,7 @@ void Object::deleteLayer(int i)
 {
     if (i > -1 && i < mLayers.size())
     {
+        mLastLayerId = qMax(mLastLayerId, getMaxLayerID());
         delete mLayers.takeAt(i);
     }
 }
@@ -426,6 +549,7 @@ void Object::deleteLayer(Layer* layer)
 
     if (it != mLayers.end())
     {
+        mLastLayerId = qMax(mLastLayerId, getMaxLayerID());
         delete layer;
         mLayers.erase(it);
     }

@@ -35,22 +35,38 @@ and must resynchronize if a gap is reported.
 `app/data/automation-operations.json` is the versioned shared command registry.
 Keep its contents byte-for-byte synchronized with Stanlee's contracts and Python
 package. No arbitrary QAction/QObject invocation is exposed. Unsupported commands
-fail explicitly. The registry records undo limitations; layer creation and FPS
-changes are not yet undoable and must not be included in atomic batches.
+fail explicitly. `native_document_transaction` operations use one reversible
+content transaction. `edit.batch` validates 1–64 eligible steps before dispatch
+and has a 16,384 pointer-sample budget. Files, settings, history, view changes and
+nested batches are excluded. Native context failures roll back the content and
+preserve earlier redo entries.
 
 `Editor::snapshot` clones native content into an independent Object/working
 directory and copies manager state without marking live history clean.
 `document.snapshot` never temporarily saves the active document under another
 name. An optional FPS override changes only the copy. Native/Python tests check
 source path, dirty state, bitmap backing files, source bytes, preview and undo
-preservation. Recovery orchestration and comprehensive sound/vector fixtures
-remain pending.
+preservation. Checkpoint recovery invalidates old handles and history. Full
+legacy-format, sound and vector qualification remains pending.
 
-Current qualification is macOS arm64 only. Windows uses a current-user-owned
-discovery DACL and QLocalServer user-access named pipes; runtime qualification
-is pending Windows CI. Invalid or uninspectable ACLs fail closed.
-Full editor coverage, atomic batches, robust document
-recovery, platform/client acceptance and signed release packaging remain pending.
+Transactions work with both legacy and QUndoStack history. They restore content
+inside the same Object and working directory, preserve native human frame history,
+retain independent audio bytes, and keep retired layer IDs unavailable for reuse.
+A content-signature preflight rejects snapshot undo/redo if newer unrecorded human
+changes would be overwritten. Active tools, colors, view and preferences stay
+live. Project FPS changes do not write the application FPS default. Full-document
+snapshots currently make memory/preparation cost proportional to project size.
+
+Layer properties, duplication/order/deletion, timeline exact-key editing, exposure,
+uniform opacity and native camera key/path/easing operations are advertised by
+the registry. Previews render independent normalized content. Camera copy/path
+serialization and bitmap save bounds have round-trip regression tests.
+
+Previous foundation qualification passed the three-platform Qt 5/6 CI matrix;
+new editing changes require a fresh matrix run. Windows uses a current-user-owned
+discovery DACL and QLocalServer user-access named pipes. Invalid or uninspectable
+ACLs fail closed. Full editor coverage, comprehensive recovery, platform/client
+acceptance and signed release packaging remain pending.
 This integration is not a complete Stanlee alpha and is not ready for upstream
 feature review. See the public build plan and coverage register for release gates.
 

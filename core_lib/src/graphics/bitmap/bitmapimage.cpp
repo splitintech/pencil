@@ -430,7 +430,7 @@ void BitmapImage::setCompositionModeBounds(QRect sourceBounds, bool isSourceMinB
  *        pixel with alpha > 0 or mBounds.isEmpty() == true
  *  @post isMinimallyBounded() == true
  */
-void BitmapImage::autoCrop()
+void BitmapImage::autoCrop(bool force)
 {
     if (!mEnableAutoCrop) return;
     if (mBounds.isEmpty()) return; // Exit if current bounds are null
@@ -439,7 +439,7 @@ void BitmapImage::autoCrop()
     Q_ASSERT(mBounds.size() == mImage.size());
 
     // Exit if already min bounded
-    if (mMinBound) return;
+    if (mMinBound && !force) return;
 
     // Get image properties
     const int width = mImage.width();
