@@ -31,6 +31,9 @@ CommandLineParser::CommandLineParser() : mParser(), mInputPath(), mOutputPaths()
                                          "It lets you create traditional hand-drawn animation (cartoon) using both bitmap and vector graphics."));
     mParser.addHelpOption();
     mParser.addVersionOption();
+#ifdef STANLEE_AUTOMATION
+    mParser.addOption(QCommandLineOption("export-capabilities", tr("Print native export capabilities as JSON")));
+#endif
     mParser.addPositionalArgument("input", tr("Path to the input pencil file."));
 
     QCommandLineOption exportOutOption(QStringList() << "o" << "export",
@@ -86,6 +89,9 @@ bool CommandLineParser::process(QStringList arguments)
     arguments.removeOne("-NSDocumentRevisionsDebugMode");
 
     mParser.process(arguments);
+#ifdef STANLEE_AUTOMATION
+    mExportCapabilities = mParser.isSet("export-capabilities");
+#endif
 
     QStringList posArgs = mParser.positionalArguments();
     if (!posArgs.isEmpty())

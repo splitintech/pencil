@@ -1037,6 +1037,7 @@ void Editor::switchVisibilityOfLayer(int layerNumber)
         layer->deselectAll();
     }
     layer->switchVisibility();
+    mObject->modification();
 
     mScribbleArea->onLayerChanged();
 

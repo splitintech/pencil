@@ -28,8 +28,17 @@
 #include "colormanager.h"
 #include "scribblearea.h"
 #include "pointerevent.h"
+#include "polylinetool.h"
+#include "preferencemanager.h"
+#include "pencilsettings.h"
 #include <QApplication>
 #include <QAction>
+#include <QActionGroup>
+#include <QDockWidget>
+#include <QToolBar>
+#include <QMap>
+#include <QSettings>
+#include <QKeySequence>
 #include <QBuffer>
 #include <QDir>
 #include <QDomDocument>
@@ -44,6 +53,7 @@
 #include <QSaveFile>
 #include <QStatusBar>
 #include <QTimer>
+#include <QImageWriter>
 #include <QUuid>
 #include <QtEndian>
 #include <cmath>
@@ -354,6 +364,10 @@ void validateValue(const QJsonValue& value, const QJsonObject& schema, const QSt
         require(value.isDouble() && std::isfinite(number) && (type != "integer" || std::floor(number) == number),
                 "invalid_arguments", "Expected finite " + type + ": " + path);
         bound("minimum", number, true); bound("maximum", number, false);
+        if (schema.contains("exclusiveMinimum"))
+        { require(number > schema.value("exclusiveMinimum").toDouble(), "invalid_arguments", "Value must exceed exclusive minimum: " + path); }
+        if (schema.contains("exclusiveMaximum"))
+        { require(number < schema.value("exclusiveMaximum").toDouble(), "invalid_arguments", "Value must be below exclusive maximum: " + path); }
     }
 }
 void validate(const QJsonObject& args, const QJsonObject& schema)
@@ -405,6 +419,13 @@ AutomationBridge::AutomationBridge(MainWindow2* window) : QObject(window), mWind
     connect(mEditor->getScribbleArea(), &ScribbleArea::selectionUpdated, this, [this] { changed("selection"); });
     connect(mEditor->playback(), &PlaybackManager::playStateChanged, this, [this] { changed("playback"); });
     connect(mEditor->sound(), &SoundManager::soundClipDurationChanged, this, [this] { changed("sound_duration"); });
+    connect(mEditor->preference(), &PreferenceManager::optionChanged, this, [this](SETTING) { changed("settings"); });
+    for (auto action : mWindow->findChildren<QAction*>())
+    { connect(action, &QAction::changed, this, [this] { changed("ui"); }); }
+    for (auto dock : mWindow->findChildren<QDockWidget*>())
+    { connect(dock, &QDockWidget::visibilityChanged, this, [this](bool) { changed("layout"); }); }
+    for (auto toolbar : mWindow->findChildren<QToolBar*>())
+    { connect(toolbar, &QToolBar::visibilityChanged, this, [this](bool) { changed("layout"); }); }
 }
 
 AutomationBridge::~AutomationBridge() { stop(); }
@@ -458,6 +479,8 @@ bool AutomationBridge::start(const QString& directory, const QStringList& worksp
     auto revoke = new QPushButton(tr("Disconnect automation"), mWindow);
     mWindow->statusBar()->addPermanentWidget(revoke);
     connect(revoke, &QPushButton::clicked, this, &AutomationBridge::stop);
+    mContentSignature = documentSignature();
+    mContentRevision = mRevision;
     changed("session_started", false);
     return true;
 }
@@ -549,8 +572,16 @@ QJsonObject AutomationBridge::dispatch(const QJsonObject& request)
             grantedPath(mEditor->object()->filePath(), false);
         }
         require(!mExecuting && !mClosing, "busy", "Another native operation is active");
+        // GUI code historically contains mutations without manager signals.
+        // Reconcile before reads as well as writes so inspection/polling never
+        // hands out a revision that silently omits an earlier human change.
+        reconcileContent();
         if (writes)
         {
+            bool discarding = (op == "document.new" || op == "document.open" || op == "document.recover" || op == "session.close")
+                && request.value("arguments").toObject().value("discard").toBool();
+            require(!mContentSignature.isEmpty() || discarding || op == "session.disconnect",
+                    "missing_asset", "Document content is unavailable; inspect or explicitly replace/discard it");
             require(request.value("document_id").toString() == mDocumentId, "invalid_document", "Document was replaced or reopened");
             require(request.value("expected_revision").isDouble() && request.value("expected_revision").toDouble() == mRevision,
                     "stale_revision", "Document changed; inspect and retry with the current revision");
@@ -573,6 +604,8 @@ QJsonObject AutomationBridge::dispatch(const QJsonObject& request)
             for (auto it = current.begin(); it != current.end(); ++it) { result.insert(it.key(), it.value()); }
         }
         if (writes) { changed(op, op != "document.snapshot" && op != "document.checkpoint"); }
+        mContentSignature = documentSignature();
+        mContentRevision = mRevision;
         result.insert("session_id", mSessionId);
         result.insert("document_id", mDocumentId);
         result.insert("revision", static_cast<double>(mRevision));
@@ -600,6 +633,38 @@ void AutomationBridge::changed(const QString& kind, bool documentChanged)
     mEvents.append(QJsonObject {{"sequence", static_cast<double>(mEventSequence)}, {"kind", kind},
         {"revision", static_cast<double>(mRevision)}, {"document_id", mDocumentId}});
     if (mEvents.size() > 1024) { mEvents.removeFirst(); }
+}
+
+void AutomationBridge::reconcileContent()
+{
+    auto signature = documentSignature();
+    if (signature.isEmpty())
+    {
+        if (!mContentSignature.isEmpty()) { changed("missing_asset"); }
+        mContentSignature.clear();
+        mContentRevision = mRevision;
+        mEditor->object()->modification();
+        return;
+    }
+    if (!mContentSignature.isEmpty() && signature != mContentSignature)
+    {
+        // Existing signals may already have invalidated the previous revision.
+        if (mRevision == mContentRevision)
+        {
+            changed("external_document");
+            mEditor->object()->modification();
+        }
+    }
+    mContentSignature = signature;
+    mContentRevision = mRevision;
+}
+
+QByteArray AutomationBridge::documentSignature() const
+{
+    // BitmapImage::image() can reload old backing pixels for an emptied live
+    // key. Fingerprinting must use the same independent snapshot as undo.
+    auto snapshot = mEditor->snapshot();
+    return snapshot ? snapshot->contentSignature() : QByteArray();
 }
 
 QString AutomationBridge::grantedPath(const QString& path, bool mustExist) const
@@ -668,6 +733,7 @@ QJsonObject AutomationBridge::state() const
         layers.append(row);
     }
     return {{"path", object->filePath()}, {"dirty", object->isModified() || mEditor->undoRedo()->hasUnsavedChanges()},
+        {"content_available", !mContentSignature.isEmpty()},
         {"frame", mEditor->currentFrame()}, {"layer_index", mEditor->currentLayerIndex()}, {"fps", mEditor->fps()},
         {"layers", layers}, {"tool", static_cast<int>(mEditor->tools()->currentTool()->type())},
         {"event_sequence", static_cast<double>(mEventSequence)},
@@ -678,12 +744,193 @@ QJsonObject AutomationBridge::state() const
 
 QJsonObject AutomationBridge::execute(const QString& op, const QJsonObject& args)
 {
+    if (op == "application.info")
+    {
+        return {{"application_version", QCoreApplication::applicationVersion()}, {"qt_version", qVersion()},
+            {"license", "GPL-2.0-only"}, {"manual", "https://www.pencil2d.org/doc/"},
+            {"source", "https://github.com/splitintech/pencil"}, {"controller", "https://github.com/splitintech/stanlee"}};
+    }
+    if (op == "canvas.capture" || op == "window.capture")
+    {
+        QWidget* widget = op == "canvas.capture" ? static_cast<QWidget*>(mEditor->getScribbleArea()) : static_cast<QWidget*>(mWindow);
+        auto pixels = widget->grab();
+        require(!pixels.isNull(), "invalid_context", "Native widget capture is unavailable");
+        if (pixels.width() > 4096 || pixels.height() > 4096) { pixels = pixels.scaled(4096, 4096, Qt::KeepAspectRatio, Qt::SmoothTransformation); }
+        QByteArray bytes; QBuffer buffer(&bytes);
+        require(pixels.save(&buffer, "PNG") && bytes.size() < 2*1024*1024, "message_too_large", "Native capture exceeds the response budget");
+        return {{"mime_type", "image/png"}, {"data", QString::fromLatin1(bytes.toBase64())},
+            {"width", pixels.width()}, {"height", pixels.height()}, {"frame", mEditor->currentFrame()}};
+    }
+    if (op.startsWith("shortcuts."))
+    {
+        QSettings defaults(":resources/kb.ini", QSettings::IniFormat);
+        defaults.beginGroup("shortcuts");
+        QSettings current(PENCIL2D, PENCIL2D);
+        if (op == "shortcuts.reset") { restoreShortcutsToDefault(); mWindow->reloadShortcutsForAutomation(); }
+        current.beginGroup("shortcuts");
+        if (op == "shortcuts.configure")
+        {
+            QString command = text(args, "command");
+            require(defaults.contains(command), "unsupported_capability", "Unknown native shortcut command");
+            auto source = args.value("key_sequence").toString();
+            QKeySequence sequence(source, QKeySequence::PortableText);
+            require(source.isEmpty() || !sequence.isEmpty(), "invalid_arguments", "Invalid portable key sequence");
+            for (int i = 0; i < sequence.count(); ++i)
+            {
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+                require(sequence[i].key() != Qt::Key_unknown, "invalid_arguments", "Unknown shortcut key");
+#else
+                require((sequence[i] & ~Qt::KeyboardModifierMask) != Qt::Key_unknown, "invalid_arguments", "Unknown shortcut key");
+#endif
+            }
+            for (const auto& key : defaults.childKeys())
+            {
+                if (key == command || sequence.isEmpty()) { continue; }
+                QKeySequence other(current.value(key, defaults.value(key)).toString(), QKeySequence::PortableText);
+                require(other != sequence || args.value("replace_conflict").toBool(), "shortcut_conflict", "Shortcut is already assigned to " + key);
+            }
+            if (!sequence.isEmpty() && args.value("replace_conflict").toBool())
+            {
+                for (const auto& key : defaults.childKeys())
+                {
+                    if (key != command && QKeySequence(current.value(key, defaults.value(key)).toString(), QKeySequence::PortableText) == sequence)
+                    { current.setValue(key, ""); }
+                }
+            }
+            current.setValue(command, sequence.toString(QKeySequence::PortableText)); current.sync();
+            require(current.status() == QSettings::NoError, "native_failure", "Shortcut settings could not be saved");
+            mWindow->reloadShortcutsForAutomation();
+        }
+        QJsonArray shortcuts;
+        for (const auto& key : defaults.childKeys())
+        { shortcuts.append(QJsonObject {{"command", key}, {"key_sequence", current.value(key, defaults.value(key)).toString()}, {"default", defaults.value(key).toString()}}); }
+        return {{"shortcuts", shortcuts}};
+    }
+    if (op.startsWith("settings."))
+    {
+        struct Binding { SETTING option; bool boolean; int minimum = 0; int maximum = 0; };
+        const QMap<QString, Binding> bindings {
+            {"antialias", {SETTING::ANTIALIAS, true}}, {"tool_cursor", {SETTING::TOOL_CURSOR, true}},
+            {"canvas_cursor", {SETTING::CANVAS_CURSOR, true}}, {"high_resolution", {SETTING::HIGH_RESOLUTION, true}},
+            {"shadow", {SETTING::SHADOW, true}}, {"quick_sizing", {SETTING::QUICK_SIZING, true}},
+            {"selection_info", {SETTING::SHOW_SELECTION_INFO, true}}, {"onion.red", {SETTING::ONION_RED, true}},
+            {"onion.blue", {SETTING::ONION_BLUE, true}}, {"onion.playback", {SETTING::ONION_WHILE_PLAYBACK, true}},
+            {"onion.multiple_layers", {SETTING::ONION_MUTLIPLE_LAYERS, true}}, {"sound.scrub", {SETTING::SOUND_SCRUB_ACTIVE, true}},
+            {"safe.action.enabled", {SETTING::ACTION_SAFE_ON, true}}, {"safe.title.enabled", {SETTING::TITLE_SAFE_ON, true}},
+            {"safe.labels", {SETTING::OVERLAY_SAFE_HELPER_TEXT_ON, true}}, {"timeline.labels", {SETTING::DRAW_LABEL, true}},
+            {"timeline.timecode", {SETTING::TIMECODE_TEXT, true}},
+            {"grid.width", {SETTING::GRID_SIZE_W, false, 1, 4096}}, {"grid.height", {SETTING::GRID_SIZE_H, false, 1, 4096}},
+            {"rotation.increment", {SETTING::ROTATION_INCREMENT, false, 1, 180}}, {"curve_smoothing", {SETTING::CURVE_SMOOTHING, false, 0, 100}},
+            {"timeline.frame_width", {SETTING::FRAME_SIZE, false, 4, 40}}, {"timeline.layer_height", {SETTING::TIMELINE_SIZE, false, 2, 100}},
+            {"timeline.font_size", {SETTING::LABEL_FONT_SIZE, false, 12, 48}},
+            {"onion.minimum_opacity", {SETTING::ONION_MIN_OPACITY, false, 0, 100}}, {"onion.maximum_opacity", {SETTING::ONION_MAX_OPACITY, false, 0, 100}},
+            {"onion.previous_count", {SETTING::ONION_PREV_FRAMES_NUM, false, 1, 60}}, {"onion.next_count", {SETTING::ONION_NEXT_FRAMES_NUM, false, 1, 60}},
+            {"flip.interval_ms", {SETTING::FLIP_ROLL_MSEC, false, 10, 10000}}, {"flip.drawings", {SETTING::FLIP_ROLL_DRAWINGS, false, 1, 100}},
+            {"flip.inbetween_ms", {SETTING::FLIP_INBETWEEN_MSEC, false, 10, 10000}}, {"sound.scrub_ms", {SETTING::SOUND_SCRUB_MSEC, false, 10, 10000}},
+            {"safe.action_percent", {SETTING::ACTION_SAFE, false, 0, 50}}, {"safe.title_percent", {SETTING::TITLE_SAFE, false, 0, 50}},
+            {"drawing.empty_frame_action", {SETTING::DRAW_ON_EMPTY_FRAME_ACTION, false, 0, 2}}
+        };
+        auto prefs = mEditor->preference();
+        if (op == "settings.configure")
+        {
+            auto values = args.value("values").toObject();
+            // Validate the full request and coupled opacity range before writes.
+            for (auto it = values.begin(); it != values.end(); ++it)
+            {
+                require(bindings.contains(it.key()), "unsupported_capability", "Unsupported setting: " + it.key());
+                auto binding = bindings.value(it.key());
+                if (binding.boolean) { require(it.value().isBool(), "invalid_arguments", "Setting requires a boolean"); }
+                else { integer(values, it.key(), binding.minimum, binding.maximum); }
+            }
+            int minimum = values.value("onion.minimum_opacity").toInt(prefs->getInt(SETTING::ONION_MIN_OPACITY));
+            int maximum = values.value("onion.maximum_opacity").toInt(prefs->getInt(SETTING::ONION_MAX_OPACITY));
+            require(minimum <= maximum, "invalid_arguments", "Minimum onion opacity must not exceed maximum");
+            for (auto it = values.begin(); it != values.end(); ++it)
+            {
+                auto binding = bindings.value(it.key());
+                if (binding.boolean) { prefs->set(binding.option, it.value().toBool()); }
+                else { prefs->set(binding.option, it.value().toInt()); }
+            }
+            mEditor->updateFrame();
+        }
+        QJsonArray settings;
+        for (auto it = bindings.begin(); it != bindings.end(); ++it)
+        {
+            auto binding = it.value();
+            QJsonObject row {{"key", it.key()}, {"type", binding.boolean ? "boolean" : "integer"}};
+            row.insert("value", binding.boolean ? QJsonValue(prefs->isOn(binding.option)) : QJsonValue(prefs->getInt(binding.option)));
+            if (!binding.boolean) { row.insert("minimum", binding.minimum); row.insert("maximum", binding.maximum); }
+            settings.append(row);
+        }
+        return {{"settings", settings}};
+    }
+    if (op.startsWith("ui."))
+    {
+        // Only these explicitly reviewed view controls can be invoked. File,
+        // dialog, plugin and arbitrary QObject actions are never dispatched.
+        const QMap<QString, QString> actions {
+            {"grid", "actionGrid"}, {"onion.previous", "actionOnionPrev"}, {"onion.next", "actionOnionNext"},
+            {"windows.lock", "actionLockWindows"}, {"status_bar", "actionStatusBar"},
+            {"vector.invisible_lines", "actionShowInvisibleLines"}, {"vector.outlines", "actionShowOutlinesOnly"},
+            {"guide.center", "actionCenter"}, {"guide.thirds", "actionThirds"}, {"guide.golden_ratio", "actionGoldenRatio"},
+            {"guide.safe_areas", "actionSafeAreas"}, {"perspective.one", "actionOnePointPerspective"},
+            {"perspective.two", "actionTwoPointPerspective"}, {"perspective.three", "actionThreePointPerspective"},
+            {"visibility.current", "actionVisibilityCurrentLayerOnly"}, {"visibility.relative", "actionVisibilityRelative"},
+            {"visibility.all", "actionVisibilityAll"}, {"angle.2", "action2Degrees"}, {"angle.3", "action3Degrees"},
+            {"angle.5", "action5Degrees"}, {"angle.7.5", "action7_5Degrees"}, {"angle.10", "action10Degrees"},
+            {"angle.15", "action15Degrees"}, {"angle.20", "action20Degrees"}, {"angle.30", "action30Degrees"}
+        };
+        const QMap<QString, QString> panels {
+            {"timeline", "TimeLine"}, {"color_wheel", "ColorWheel"}, {"color_inspector", "Color Inspector"},
+            {"palette", "ColorPalette"}, {"onion_skin", "Onion Skin"}, {"tool_options", "ToolOption"},
+            {"toolbox", "ToolBox"}, {"toolbar.main", "mMainToolbar"}, {"toolbar.view", "mViewToolbar"},
+            {"toolbar.overlays", "mOverlayToolbar"}
+        };
+        if (op == "ui.configure")
+        {
+            QString id = text(args, "control");
+            require(actions.contains(id), "unsupported_capability", "Unknown UI control");
+            auto action = mWindow->findChild<QAction*>(actions.value(id));
+            require(action && action->isEnabled() && action->isCheckable(), "invalid_context", "UI control is unavailable or disabled");
+            bool checked = args.value("checked").toBool();
+            require(checked || !action->actionGroup() || !action->actionGroup()->isExclusive(),
+                    "invalid_context", "Select another exclusive control instead of unchecking it");
+            if (action->isChecked() != checked) { action->trigger(); }
+            require(action->isChecked() == checked, "invalid_context", "Native control rejected the requested state");
+        }
+        else if (op == "ui.panel")
+        {
+            QString id = text(args, "panel");
+            require(panels.contains(id), "unsupported_capability", "Unknown application panel");
+            auto widget = mWindow->findChild<QWidget*>(panels.value(id));
+            require(widget, "invalid_context", "Panel is unavailable in this build");
+            widget->setVisible(args.value("visible").toBool());
+        }
+        else if (op == "ui.layout_reset") { mWindow->resetLayoutForAutomation(); }
+        QJsonArray controls, panelState;
+        for (auto it = actions.begin(); it != actions.end(); ++it)
+        {
+            auto action = mWindow->findChild<QAction*>(it.value());
+            if (action) { controls.append(QJsonObject {{"control", it.key()}, {"enabled", action->isEnabled()}, {"checked", action->isChecked()}}); }
+        }
+        for (auto it = panels.begin(); it != panels.end(); ++it)
+        {
+            auto widget = mWindow->findChild<QWidget*>(it.value());
+            if (widget) { panelState.append(QJsonObject {{"panel", it.key()}, {"visible", !widget->isHidden()}}); }
+        }
+        mEditor->updateFrame();
+        return {{"controls", controls}, {"panels", panelState}};
+    }
     if (op == "session.capabilities")
     {
         QJsonArray operations;
         for (const auto& item : ::operations()) { operations.append(item.toObject().value("id")); }
+        QJsonArray imageFormats;
+        for (const auto& format : QImageWriter::supportedImageFormats())
+        { imageFormats.append(QString::fromLatin1(format).toLower()); }
         return {{"protocol_version", 1}, {"application_version", QCoreApplication::applicationVersion()},
-            {"operations", operations}, {"workspaces", QJsonArray::fromStringList(mWorkspaces)}, {"qualified_alpha", false}};
+            {"operations", operations}, {"workspaces", QJsonArray::fromStringList(mWorkspaces)},
+            {"image_formats", imageFormats}, {"qualified_alpha", false}};
     }
     if (op == "bitmap.inspect")
     {
@@ -734,8 +981,24 @@ QJsonObject AutomationBridge::execute(const QString& op, const QJsonObject& args
                 {"segment_count", curve.getVertexSize()}, {"segments", segments}, {"width", curve.getWidth()}, {"feather", curve.getFeather()},
                 {"color_index", curve.getColorNumber()}, {"variable_width", curve.getVariableWidth()}, {"invisible", curve.isInvisible()}, {"selected", curve.isSelected()}});
         }
+        QJsonArray areas;
+        int areaOffset = args.value("area_offset").toInt(), areaLimit = args.value("area_limit").toInt(16);
+        for (int i = areaOffset; i < qMin(image->mArea.size(), areaOffset+areaLimit); ++i)
+        {
+            auto& area = image->mArea[i]; QJsonArray vertices;
+            require(area.mVertex.size() <= 4096, "message_too_large", "Area exceeds 4096 inspectable vertices");
+            for (const auto& ref : area.mVertex)
+            {
+                require(ref.curveNumber >= 0 && ref.curveNumber < count && ref.vertexNumber >= -1 &&
+                    ref.vertexNumber < image->curve(ref.curveNumber).getVertexSize(), "invalid_document", "Invalid native area vertex reference");
+                auto at = image->getVertex(ref);
+                vertices.append(QJsonObject {{"curve", ref.curveNumber}, {"vertex", ref.vertexNumber}, {"x", at.x()}, {"y", at.y()}});
+            }
+            areas.append(QJsonObject {{"area", i}, {"color_index", area.getColorNumber()}, {"selected", area.isSelected()}, {"vertices", vertices}});
+        }
         return {{"index", index}, {"frame", frame}, {"curve_count", count}, {"area_count", image->mArea.size()},
-            {"offset", offset}, {"curves", curves}, {"next_offset", qMin(count, offset+limit)}};
+            {"offset", offset}, {"curves", curves}, {"next_offset", qMin(count, offset+limit)},
+            {"areas", areas}, {"area_next_offset", qMin(image->mArea.size(), areaOffset+areaLimit)}};
     }
     if (op == "palette.export")
     {
@@ -958,6 +1221,81 @@ QJsonObject AutomationBridge::execute(const QString& op, const QJsonObject& args
         mEditor->object()->modification();
     }
     else if (op == "layer.select") { mEditor->layers()->setCurrentLayer(integer(args, "index", 0, mEditor->layers()->count()-1)); }
+    else if (op == "layer.import")
+    {
+        auto path = grantedPath(text(args, "path"), true);
+        require(QFileInfo(path).size() <= 64*1024*1024, "invalid_arguments", "Project import exceeds 64 MiB");
+        FileManager manager;
+        std::unique_ptr<Object> source(manager.load(path));
+        require(source && manager.error().ok(), "invalid_document", "Native source project could not be opened");
+        auto indices = args.value("indices").toArray(); QSet<int> selected;
+        for (const auto& value : indices)
+        {
+            QJsonObject row {{"index", value}};
+            int index = integer(row, "index", 0, source->getLayerCount()-1);
+            require(!selected.contains(index), "invalid_selection", "Select each source layer once"); selected.insert(index);
+        }
+        auto target = mEditor->object();
+        require(source->getColorCount() <= 4096 && target->getColorCount()+source->getColorCount() <= 8192,
+                "invalid_arguments", "Imported palette exceeds the color budget");
+        QVector<int> colors(source->getColorCount(), -1);
+        int keys = 0; qint64 pixels = 0;
+        for (const auto& value : indices)
+        {
+            auto layer = source->getLayer(value.toInt());
+            std::unique_ptr<Layer> imported;
+            switch (layer->type())
+            {
+            case Layer::BITMAP: imported.reset(new LayerBitmap(0)); break;
+            case Layer::VECTOR: imported.reset(new LayerVector(0)); break;
+            case Layer::SOUND: imported.reset(new LayerSound(0)); break;
+            case Layer::CAMERA: imported.reset(new LayerCamera(0)); break;
+            default: throw Failure("unsupported_capability", "Unsupported native source layer");
+            }
+            QDomDocument document;
+            auto metadata = layer->type() == Layer::BITMAP ? layer->createBaseDomElement(document) : layer->createDomElement(document);
+            while (!metadata.firstChild().isNull()) { metadata.removeChild(metadata.firstChild()); }
+            imported->loadDomElement(metadata, target->dataDir(), [] {});
+            imported->setName(mEditor->layers()->nameSuggestLayer(imported->name()));
+            layer->foreachKeyFrame([&](KeyFrame* key) {
+                require(++keys <= 4096, "invalid_arguments", "Layer import exceeds 4096 keys");
+                auto copy = copyKeyForEdit(layer, key->pos());
+                if (layer->type() == Layer::BITMAP)
+                {
+                    auto bitmap = static_cast<BitmapImage*>(copy.get()); checkBitmapBudget(bitmap->bounds());
+                    pixels += qint64(bitmap->bounds().width())*bitmap->bounds().height();
+                    require(pixels <= 64000000, "invalid_arguments", "Layer import exceeds 64 million bitmap pixels");
+                }
+                else if (layer->type() == Layer::VECTOR)
+                {
+                    auto image = static_cast<VectorImage*>(copy.get());
+                    auto remap = [&](int index) {
+                        require(index >= 0 && index < colors.size(), "invalid_document", "Source vector references an invalid color");
+                        if (colors[index] < 0)
+                        {
+                            auto color = source->getColor(index);
+                            for (int j = 0; j < target->getColorCount(); ++j)
+                            { auto existing = target->getColor(j); if (existing.name == color.name && existing.color == color.color) { colors[index] = j; break; } }
+                            if (colors[index] < 0) { colors[index] = target->getColorCount(); target->addColor(color); }
+                        }
+                        return colors[index];
+                    };
+                    for (int i = 0; !image->isEmpty() && i <= image->getLastCurveNumber(); ++i)
+                    { auto& curve = image->curve(i); curve.setColorNumber(remap(curve.getColorNumber())); }
+                    for (auto& area : image->mArea) { area.setColorNumber(remap(area.getColorNumber())); }
+                }
+                else if (layer->type() == Layer::SOUND && !key->fileName().isEmpty())
+                {
+                    require(QFileInfo(key->fileName()).size() <= 64*1024*1024, "invalid_arguments", "Imported sound exceeds the native asset budget");
+                    require(mEditor->sound()->loadSound(static_cast<SoundClip*>(copy.get()), key->fileName()).ok(), "missing_asset", "Source sound could not be copied independently");
+                }
+                imported->addOrReplaceKeyFrame(key->pos(), copy.release());
+            });
+            require(target->addLayer(imported.get()), "native_failure", "Native imported layer insertion failed"); imported.release();
+        }
+        target->modification(); emit mEditor->layers()->layerCountChanged(target->getLayerCount());
+        mEditor->layers()->setCurrentLayer(target->getLayerCount()-1); emit mEditor->framesModified();
+    }
     else if (op == "layer.update" || op == "layer.delete" || op == "layer.duplicate" || op == "layer.reorder")
     {
         int index = integer(args, "index", 0, mEditor->layers()->count()-1);
@@ -1150,6 +1488,36 @@ QJsonObject AutomationBridge::execute(const QString& op, const QJsonObject& args
             curve.setWidth(args.value("width").toDouble()); curve.setFeather(args.value("feather").toDouble());
             curve.setVariableWidth(args.value("variable_width").toBool()); curve.setInvisibility(args.value("invisible").toBool());
             image->addCurve(curve, 1.0, false);
+        }
+        else if (op == "vector.insert_point" || op == "vector.remove_point")
+        {
+            int count = image->isEmpty() ? 0 : image->getLastCurveNumber()+1;
+            int curve = integer(args, "curve", 0, count-1);
+            int vertex = integer(args, "vertex", op == "vector.insert_point" ? 0 : -1, image->curve(curve).getVertexSize()-1);
+            if (op == "vector.insert_point")
+            { image->addPoint(curve, vertex, args.value("fraction").toDouble()); }
+            else { image->removeVertex(curve, vertex); }
+        }
+        else if (op == "vector.select_points" || op == "vector.transform_points" || op == "vector.delete_points")
+        {
+            int count = image->isEmpty() ? 0 : image->getLastCurveNumber()+1;
+            QList<VertexRef> points;
+            for (const auto& value : args.value("points").toArray())
+            {
+                auto point = value.toObject();
+                int curve = integer(point, "curve", 0, count-1);
+                points.append(VertexRef(curve, integer(point, "vertex", -1, image->curve(curve).getVertexSize()-1)));
+            }
+            image->deselectAll(); image->setSelected(points, true); image->calculateSelectionRect();
+            if (op == "vector.select_points") { mEditor->updateFrame(); return state(); }
+            if (op == "vector.delete_points") { image->deleteSelectedPoints(); }
+            else
+            {
+                auto m = args.value("matrix").toArray();
+                QTransform transform(m[0].toDouble(), m[1].toDouble(), m[2].toDouble(), m[3].toDouble(), m[4].toDouble(), m[5].toDouble());
+                require(transform.isInvertible(), "invalid_arguments", "Vector transform must be invertible");
+                image->applySelectionTransformation(transform);
+            }
         }
         else if (op == "vector.geometry")
         {
@@ -1348,6 +1716,56 @@ QJsonObject AutomationBridge::execute(const QString& op, const QJsonObject& args
         }
         mEditor->object()->modification(); mEditor->layers()->notifyAnimationLengthChanged(); emit mEditor->framesModified();
     }
+    else if (op == "import.sequence" || op == "import.animated")
+    {
+        int index = integer(args, "index", 0, mEditor->layers()->count()-1);
+        auto layer = dynamic_cast<LayerBitmap*>(mEditor->object()->getLayer(index));
+        require(layer && layer->visible(), "invalid_context", "Sequence import requires a visible bitmap layer");
+        int start = integer(args, "frame", 1, 1000000), spacing = integer(args, "spacing", 1, 10000);
+        QStringList paths;
+        int count = 0;
+        qint64 pixels = 0, bytes = 0;
+        if (op == "import.animated")
+        {
+            auto path = grantedPath(text(args, "path"), true);
+            QImageReader reader(path);
+            count = reader.imageCount();
+            require(count >= 1 && count <= 512, "unsupported_capability", "Animated import requires a known count of 1–512 frames");
+            auto size = reader.size();
+            require(size.isValid(), "invalid_document", "Animated image metadata is unavailable");
+            pixels = qint64(size.width())*size.height()*count;
+            bytes = QFileInfo(path).size(); paths.append(path);
+        }
+        else
+        {
+            for (const auto& value : args.value("paths").toArray())
+            {
+                auto path = grantedPath(value.toString(), true);
+                QImageReader reader(path); auto size = reader.size();
+                require(size.isValid() && size.width() <= 8192 && size.height() <= 8192,
+                        "invalid_document", "Sequence image is invalid or exceeds native dimensions");
+                pixels += qint64(size.width())*size.height(); bytes += QFileInfo(path).size();
+                paths.append(path);
+            }
+            count = paths.size();
+        }
+        require(pixels <= 64000000 && bytes <= 256*1024*1024 && count > 0 && start+qint64(count-1)*spacing <= 1000000,
+                "invalid_arguments", "Sequence exceeds frame, asset or pixel budget");
+        for (int i = 0; i < count; ++i)
+        { require(!layer->keyExists(start+i*spacing) || args.value("overwrite").toBool(), "overwrite_required", "Sequence would replace an existing key"); }
+        mEditor->layers()->setCurrentLayer(index); mEditor->scrubTo(start);
+        if (op == "import.animated")
+        { require(mEditor->importAnimatedImage(paths.first(), spacing, [](int) {}, [] { return false; }).ok(), "invalid_document", "Native animated image import failed"); }
+        else
+        {
+            for (int i = 0; i < paths.size(); ++i)
+            {
+                execute("import.image", QJsonObject {{"index", index}, {"frame", start+i*spacing},
+                    {"path", paths[i]}, {"position", args.value("position").toInt(1)}});
+            }
+        }
+        mEditor->object()->modification(); emit mEditor->framesModified();
+    }
     else if (op == "import.image")
     {
         int index = integer(args, "index", 0, mEditor->layers()->count()-1);
@@ -1406,6 +1824,15 @@ QJsonObject AutomationBridge::execute(const QString& op, const QJsonObject& args
     else if (op == "color.select_index")
     {
         mEditor->color()->setColorNumber(integer(args, "index", 0, mEditor->object()->getColorCount()-1));
+    }
+    else if (op == "canvas.polyline")
+    {
+        auto tool = dynamic_cast<PolylineTool*>(mEditor->tools()->currentTool());
+        require(tool, "invalid_context", "Select the native polyline tool first");
+        QList<QPointF> points;
+        for (const auto& value : args.value("points").toArray())
+        { auto point = value.toObject(); points.append(QPointF(point.value("x").toDouble(), point.value("y").toDouble())); }
+        require(tool->applyPolyline(points), "invalid_context", "Native polyline requires an idle tool and visible paintable layer");
     }
     else if (op == "canvas.stroke")
     {

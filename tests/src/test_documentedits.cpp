@@ -23,6 +23,22 @@
 #include <QDomDocument>
 #include "filemanager.h"
 
+TEST_CASE("Human palette rename marks native document dirty and changes signature")
+{
+    Object object;
+    object.init();
+    REQUIRE(object.getColorCount() > 0);
+    object.setModified(false);
+    auto before = object.contentSignature();
+    REQUIRE_FALSE(before.isEmpty());
+    object.renameColor(0, "Human renamed color");
+    REQUIRE(object.isModified());
+    REQUIRE(object.contentSignature() != before);
+    object.setModified(false);
+    object.renameColor(0, "Human renamed color");
+    REQUIRE_FALSE(object.isModified());
+}
+
 namespace {
 class EditCanvas : public ScribbleArea
 {

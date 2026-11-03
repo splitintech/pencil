@@ -17,6 +17,10 @@ GNU General Public License for more details.
 
 #include <QFileInfo>
 #include <QTextStream>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QJsonArray>
+#include <QImageWriter>
 
 #include "editor.h"
 #include "fileformat.h"
@@ -26,6 +30,7 @@ GNU General Public License for more details.
 #include "movieexporter.h"
 #include "object.h"
 #include "playbackmanager.h"
+#include "layersound.h"
 
 #include "commandlineexporter.h"
 
@@ -118,6 +123,24 @@ bool CommandLineExporter::process(const QString &inputPath,
         mErr << tr("Error: The last export frame precedes the first frame.") << qEndl;
         return false;
     }
+#ifdef STANLEE_AUTOMATION
+    bool hasAudio = false;
+    for (auto layer : mEditor->object()->getLayersByType<LayerSound>())
+    {
+        if (!layer->visible()) { continue; }
+        layer->foreachKeyFrame([&hasAudio](KeyFrame* key) {
+            if (!key->fileName().isEmpty()) { hasAudio = true; }
+        });
+    }
+    QJsonArray imageFormats;
+    for (const auto& format : QImageWriter::supportedImageFormats())
+    { imageFormats.append(QString::fromLatin1(format).toLower()); }
+    QJsonObject plan {{"version", 1}, {"width", width}, {"height", height},
+        {"start", startFrame}, {"end", endFrame}, {"fps", mEditor->playback()->fps()},
+        {"audio_streams", hasAudio ? 1 : 0}, {"camera_id", cameraLayer->id()},
+        {"image_formats", imageFormats}};
+    mOut << "STANLEE_EXPORT_PLAN " << QJsonDocument(plan).toJson(QJsonDocument::Compact) << qEndl;
+#endif
     for (const QString& outputPath : outputPaths)
     {
         // Detect format

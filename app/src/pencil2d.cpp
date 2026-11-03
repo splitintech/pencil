@@ -40,6 +40,11 @@ GNU General Public License for more details.
 #include "object.h"
 #include "editor.h"
 #include "objectdata.h"
+#include <QImageWriter>
+#include <QJsonArray>
+#include <QJsonObject>
+#include <QJsonDocument>
+#include <QTextStream>
 #endif
 
 
@@ -94,6 +99,19 @@ Status Pencil2D::handleCommandLineOptions()
 {
     CommandLineParser parser;
     if (!parser.process(arguments())) { return Status::FAIL; }
+#ifdef STANLEE_AUTOMATION
+    if (parser.exportCapabilities())
+    {
+        QJsonArray images;
+        for (const auto& format : QImageWriter::supportedImageFormats())
+        { images.append(QString::fromLatin1(format).toLower()); }
+        QJsonObject capabilities {{"schema_version", 1}, {"application_version", applicationVersion()},
+            {"image_formats", images}, {"native_export_plan", true},
+            {"movie_extensions", QJsonArray {"mp4", "avi", "webm", "gif", "apng"}}};
+        QTextStream(stdout) << QJsonDocument(capabilities).toJson(QJsonDocument::Compact) << '\n';
+        return Status::SAFE;
+    }
+#endif
 
 #ifndef QT_DEBUG
     if (isInstanceOpen()) {

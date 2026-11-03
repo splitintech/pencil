@@ -645,7 +645,9 @@ void Object::removeColor(int index)
 
 void Object::renameColor(int i, const QString& text)
 {
+    if (i < 0 || i >= mPalette.size() || mPalette[i].name == text) { return; }
     mPalette[i].name = text;
+    modification();
 }
 
 QString Object::savePalette(const QString& dataFolder) const

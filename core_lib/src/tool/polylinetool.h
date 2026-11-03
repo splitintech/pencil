@@ -53,6 +53,8 @@ public:
     bool leavingThisTool() override;
 
     bool isActive() const override;
+    /** Complete a native canvas-coordinate path without a pending UI gesture. */
+    bool applyPolyline(const QList<QPointF>& points);
 
 signals:
     void bezierPathEnabledChanged(bool useBezier);

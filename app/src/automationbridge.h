@@ -33,6 +33,8 @@ private:
     QJsonObject execute(const QString& operation, const QJsonObject& args);
     QString grantedPath(const QString& path, bool mustExist) const;
     void changed(const QString& kind, bool documentChanged = true);
+    void reconcileContent();
+    QByteArray documentSignature() const;
 
     MainWindow2* mWindow = nullptr;
     Editor* mEditor = nullptr;
@@ -45,6 +47,8 @@ private:
     QString mToken;
     QStringList mWorkspaces;
     qint64 mRevision = 0;
+    qint64 mContentRevision = 0;
+    QByteArray mContentSignature;
     qint64 mEventSequence = 0;
     QJsonArray mEvents;
     bool mExecuting = false;

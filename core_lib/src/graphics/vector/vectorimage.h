@@ -76,6 +76,8 @@ public:
     void deleteSelection();
     void deleteSelectedPoints();
     void removeVertex(int curve, int vertex);
+    /** Split a native cubic segment and update every filled-area reference. */
+    void addPoint(int curveNumber, int vertexNumber, qreal fraction);
 
     QRectF getBoundsOfTransformedCurves() const;
 
@@ -151,8 +153,6 @@ public:
     qreal getOpacity() const { return mOpacity; }
 
 private:
-    void addPoint(int curveNumber, int vertexNumber, qreal fraction);
-
     void checkCurveExtremity(BezierCurve& newCurve, qreal tolerance);
     void checkCurveIntersections(BezierCurve& newCurve, qreal tolerance);
 

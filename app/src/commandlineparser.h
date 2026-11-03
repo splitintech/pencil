@@ -37,6 +37,7 @@ public:
     int startFrame() const { return mStartFrame; }
     int endFrame() const { return mEndFrame; }
     bool transparency() const { return mTransparency; }
+    bool exportCapabilities() const { return mExportCapabilities; }
 
 private:
     QCommandLineParser mParser;
@@ -49,6 +50,7 @@ private:
     int mStartFrame = 1;
     int mEndFrame = -1;
     bool mTransparency = false;
+    bool mExportCapabilities = false;
 };
 
 #endif // COMMANDLINEPARSER_H

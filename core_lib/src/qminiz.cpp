@@ -20,6 +20,8 @@ GNU General Public License for more details.
 #include <QDir>
 #include <QDebug>
 #include <QDirIterator>
+#include <QSaveFile>
+#include <limits>
 #include "util.h"
 
 
@@ -65,7 +67,8 @@ size_t MiniZ::istreamReadCallback(void *pOpaque, mz_uint64 file_ofs, void * pBuf
 }
 
 // ReSharper disable once CppInconsistentNaming
-Status MiniZ::compressFolder(QString zipFilePath, QString srcFolderPath, const QStringList& fileList, QString mimetype)
+Status MiniZ::compressFolder(QString zipFilePath, QString srcFolderPath, const QStringList& fileList, QString mimetype,
+                            const std::function<void()>& afterFile)
 {
     DebugDetails dd;
     dd << "\n[Miniz COMPRESSION diagnostics]\n";
@@ -84,7 +87,25 @@ Status MiniZ::compressFolder(QString zipFilePath, QString srcFolderPath, const Q
 
     mz_zip_zero_struct(mz);
 
-    mz_bool ok = mz_zip_writer_init_file(mz, zipFilePath.toUtf8().data(), 0);
+    // Stream the complete archive into a sibling temporary file. Never let an
+    // encoder error, full disk or process interruption truncate the old project.
+    QSaveFile destination(zipFilePath);
+    destination.setDirectWriteFallback(false);
+    if (!destination.open(QIODevice::WriteOnly))
+    {
+        dd << QString("Error: Cannot stage project: %1").arg(destination.errorString());
+        return Status(Status::FAIL, dd);
+    }
+    mz->m_pIO_opaque = &destination;
+    mz->m_pWrite = [](void* opaque, mz_uint64 offset, const void* buffer, size_t length) -> size_t {
+        auto file = static_cast<QSaveFile*>(opaque);
+        if (offset > static_cast<mz_uint64>(std::numeric_limits<qint64>::max()) ||
+            length > static_cast<size_t>(std::numeric_limits<qint64>::max()) ||
+            !file->seek(static_cast<qint64>(offset))) { return 0; }
+        auto written = file->write(static_cast<const char*>(buffer), static_cast<qint64>(length));
+        return written < 0 ? 0 : static_cast<size_t>(written);
+    };
+    mz_bool ok = mz_zip_writer_init(mz, 0);
 
     if (!ok)
     {
@@ -146,6 +167,7 @@ Status MiniZ::compressFolder(QString zipFilePath, QString srcFolderPath, const Q
             dd << QString("Error: Unable to add file: %3. Error code: %1, reason: %2 - Aborting!").arg(static_cast<int>(err)).arg(mz_zip_get_error_string(err), sRelativePath);
             return Status(Status::FAIL, dd);
         }
+        if (afterFile) { afterFile(); }
     }
     ok &= mz_zip_writer_finalize_archive(mz);
     if (!ok)
@@ -155,6 +177,11 @@ Status MiniZ::compressFolder(QString zipFilePath, QString srcFolderPath, const Q
         return Status(Status::FAIL, dd);
     }
 
+    if (!destination.commit())
+    {
+        dd << QString("Error: Cannot publish project: %1").arg(destination.errorString());
+        return Status(Status::FAIL, dd);
+    }
     return Status::OK;
 }
 

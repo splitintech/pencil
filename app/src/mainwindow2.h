@@ -79,6 +79,8 @@ public slots:
 public:
 #ifdef STANLEE_AUTOMATION
     void closeForAutomation();
+    void resetLayoutForAutomation() { resetAndDockAllSubWidgets(); }
+    void reloadShortcutsForAutomation() { clearKeyboardShortcuts(); setupKeyboardShortcuts(); }
 #endif
     void newDocument();
     void openDocument();

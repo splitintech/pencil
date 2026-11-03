@@ -83,6 +83,7 @@ bool isMovieFormat(const QString& format)
             { "JPG", false },
             { "TIF", false },
             { "BMP", false },
+            { "WEBP", false },
             { "MP4",  true },
             { "AVI",  true },
             { "GIF",  true },

@@ -89,6 +89,18 @@ bool PolylineTool::isActive() const
     return !mPoints.isEmpty();
 }
 
+bool PolylineTool::applyPolyline(const QList<QPointF>& points)
+{
+    auto layer = mEditor->layers()->currentLayer();
+    if (isActive() || points.size() < 2 || points.size() > 4096 ||
+        !layer || !layer->visible() || !layer->isPaintable()) { return false; }
+    mScribbleArea->handleDrawingOnEmptyFrame();
+    mPoints = points;
+    emit isActiveChanged(POLYLINE, true);
+    endPolyline(points);
+    return true;
+}
+
 QCursor PolylineTool::cursor()
 {
     return QCursor(QPixmap(":icons/general/cross.png"), 10, 10);
