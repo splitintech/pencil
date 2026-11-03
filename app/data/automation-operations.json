@@ -5009,6 +5009,460 @@
         "missing_asset"
       ],
       "atomic": false
+    },
+    {
+      "id": "bitmap.inspect",
+      "input": {
+        "type": "object",
+        "properties": {
+          "index": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000000
+          },
+          "frame": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000000
+          },
+          "points": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "x": {
+                  "type": "integer",
+                  "minimum": -1000000,
+                  "maximum": 1000000
+                },
+                "y": {
+                  "type": "integer",
+                  "minimum": -1000000,
+                  "maximum": 1000000
+                }
+              },
+              "required": [
+                "x",
+                "y"
+              ],
+              "additionalProperties": false
+            },
+            "minItems": 0,
+            "maxItems": 1024
+          }
+        },
+        "required": [
+          "index",
+          "frame"
+        ],
+        "additionalProperties": false
+      },
+      "output": {
+        "type": "object",
+        "properties": {
+          "session_id": {
+            "type": "string"
+          },
+          "document_id": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "session_id",
+          "document_id",
+          "revision"
+        ]
+      },
+      "effects": "observation",
+      "requires_revision": false,
+      "undo": "not_applicable",
+      "cancellation": "before_dispatch",
+      "native": "AutomationBridge::execute",
+      "path_parameters": [],
+      "coverage_entries": [],
+      "platform_qualification": {
+        "macos": "unqualified",
+        "windows": "unqualified",
+        "linux": "unqualified"
+      },
+      "preconditions": [
+        "authenticated_session"
+      ],
+      "failures": [
+        "unauthorized",
+        "protocol_mismatch",
+        "invalid_arguments",
+        "unsupported_capability",
+        "transport_failure",
+        "invalid_document",
+        "stale_revision",
+        "busy",
+        "snapshot_failed",
+        "rollback_failed",
+        "invalid_context",
+        "invalid_selection",
+        "missing_asset"
+      ],
+      "atomic": false
+    },
+    {
+      "id": "bitmap.transform",
+      "input": {
+        "type": "object",
+        "properties": {
+          "index": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000000
+          },
+          "frame": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000000
+          },
+          "rect": {
+            "type": "object",
+            "properties": {
+              "x": {
+                "type": "integer",
+                "minimum": -1000000,
+                "maximum": 1000000
+              },
+              "y": {
+                "type": "integer",
+                "minimum": -1000000,
+                "maximum": 1000000
+              },
+              "width": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 8192
+              },
+              "height": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 8192
+              }
+            },
+            "required": [
+              "x",
+              "y",
+              "width",
+              "height"
+            ],
+            "additionalProperties": false
+          },
+          "matrix": {
+            "type": "array",
+            "items": {
+              "type": "number",
+              "minimum": -10000,
+              "maximum": 10000
+            },
+            "minItems": 6,
+            "maxItems": 6
+          },
+          "smooth": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "index",
+          "frame",
+          "matrix"
+        ],
+        "additionalProperties": false
+      },
+      "output": {
+        "type": "object",
+        "properties": {
+          "session_id": {
+            "type": "string"
+          },
+          "document_id": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "session_id",
+          "document_id",
+          "revision"
+        ]
+      },
+      "effects": "document",
+      "requires_revision": true,
+      "undo": "native_document_transaction",
+      "cancellation": "before_dispatch",
+      "native": "AutomationBridge::execute",
+      "path_parameters": [],
+      "coverage_entries": [],
+      "platform_qualification": {
+        "macos": "unqualified",
+        "windows": "unqualified",
+        "linux": "unqualified"
+      },
+      "preconditions": [
+        "authenticated_session",
+        "current_document_and_revision",
+        "no_active_human_tool_or_modal"
+      ],
+      "failures": [
+        "unauthorized",
+        "protocol_mismatch",
+        "invalid_arguments",
+        "unsupported_capability",
+        "transport_failure",
+        "invalid_document",
+        "stale_revision",
+        "busy",
+        "snapshot_failed",
+        "rollback_failed",
+        "invalid_context",
+        "invalid_selection",
+        "missing_asset"
+      ],
+      "atomic": true
+    },
+    {
+      "id": "bitmap.copy",
+      "input": {
+        "type": "object",
+        "properties": {
+          "index": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000000
+          },
+          "frame": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000000
+          },
+          "target_index": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000000
+          },
+          "target_frame": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000000
+          },
+          "rect": {
+            "type": "object",
+            "properties": {
+              "x": {
+                "type": "integer",
+                "minimum": -1000000,
+                "maximum": 1000000
+              },
+              "y": {
+                "type": "integer",
+                "minimum": -1000000,
+                "maximum": 1000000
+              },
+              "width": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 8192
+              },
+              "height": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 8192
+              }
+            },
+            "required": [
+              "x",
+              "y",
+              "width",
+              "height"
+            ],
+            "additionalProperties": false
+          },
+          "dx": {
+            "type": "integer",
+            "minimum": -1000000,
+            "maximum": 1000000
+          },
+          "dy": {
+            "type": "integer",
+            "minimum": -1000000,
+            "maximum": 1000000
+          },
+          "cut": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "index",
+          "frame",
+          "target_index",
+          "target_frame"
+        ],
+        "additionalProperties": false
+      },
+      "output": {
+        "type": "object",
+        "properties": {
+          "session_id": {
+            "type": "string"
+          },
+          "document_id": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "session_id",
+          "document_id",
+          "revision"
+        ]
+      },
+      "effects": "document",
+      "requires_revision": true,
+      "undo": "native_document_transaction",
+      "cancellation": "before_dispatch",
+      "native": "AutomationBridge::execute",
+      "path_parameters": [],
+      "coverage_entries": [],
+      "platform_qualification": {
+        "macos": "unqualified",
+        "windows": "unqualified",
+        "linux": "unqualified"
+      },
+      "preconditions": [
+        "authenticated_session",
+        "current_document_and_revision",
+        "no_active_human_tool_or_modal"
+      ],
+      "failures": [
+        "unauthorized",
+        "protocol_mismatch",
+        "invalid_arguments",
+        "unsupported_capability",
+        "transport_failure",
+        "invalid_document",
+        "stale_revision",
+        "busy",
+        "snapshot_failed",
+        "rollback_failed",
+        "invalid_context",
+        "invalid_selection",
+        "missing_asset"
+      ],
+      "atomic": true
+    },
+    {
+      "id": "bitmap.paper",
+      "input": {
+        "type": "object",
+        "properties": {
+          "index": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000000
+          },
+          "frames": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000000
+            },
+            "minItems": 1,
+            "maxItems": 256,
+            "uniqueItems": true
+          },
+          "threshold": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 255
+          },
+          "red": {
+            "type": "boolean"
+          },
+          "green": {
+            "type": "boolean"
+          },
+          "blue": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "index",
+          "frames",
+          "threshold",
+          "red",
+          "green",
+          "blue"
+        ],
+        "additionalProperties": false
+      },
+      "output": {
+        "type": "object",
+        "properties": {
+          "session_id": {
+            "type": "string"
+          },
+          "document_id": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "session_id",
+          "document_id",
+          "revision"
+        ]
+      },
+      "effects": "document",
+      "requires_revision": true,
+      "undo": "native_document_transaction",
+      "cancellation": "before_dispatch",
+      "native": "AutomationBridge::execute",
+      "path_parameters": [],
+      "coverage_entries": [],
+      "platform_qualification": {
+        "macos": "unqualified",
+        "windows": "unqualified",
+        "linux": "unqualified"
+      },
+      "preconditions": [
+        "authenticated_session",
+        "current_document_and_revision",
+        "no_active_human_tool_or_modal"
+      ],
+      "failures": [
+        "unauthorized",
+        "protocol_mismatch",
+        "invalid_arguments",
+        "unsupported_capability",
+        "transport_failure",
+        "invalid_document",
+        "stale_revision",
+        "busy",
+        "snapshot_failed",
+        "rollback_failed",
+        "invalid_context",
+        "invalid_selection",
+        "missing_asset"
+      ],
+      "atomic": true
     }
   ]
 }

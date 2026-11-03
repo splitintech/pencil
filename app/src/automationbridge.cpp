@@ -87,6 +87,34 @@ QString text(const QJsonObject& args, const QString& key)
     return value;
 }
 
+void checkBitmapBudget(const QRect& bounds)
+{
+    require(bounds.width() <= 8192 && bounds.height() <= 8192 && qint64(bounds.width())*bounds.height() <= 32000000 &&
+        std::abs(qint64(bounds.x())) <= 1000000 && std::abs(qint64(bounds.y())) <= 1000000,
+        "invalid_arguments", "Bitmap allocation exceeds the dimension, position or pixel budget");
+}
+BitmapImage independentBitmap(BitmapImage* source)
+{
+    if (!source->isLoaded() && !source->fileName().isEmpty())
+    {
+        QImageReader reader(source->fileName()); auto size = reader.size();
+        require(size.isValid(), "missing_asset", "Bitmap backing data is unavailable");
+        checkBitmapBudget(QRect(QPoint(), size));
+    }
+    BitmapImage copy(*source); copy.loadFile();
+    require(source->fileName().isEmpty() || copy.isLoaded(), "missing_asset", "Bitmap backing data could not be loaded");
+    copy.enableAutoCrop(true); copy.autoCrop(true); checkBitmapBudget(copy.bounds());
+    return copy;
+}
+QRect bitmapRectangle(const QJsonObject& args, const QRect& fallback)
+{
+    if (!args.contains("rect")) { return fallback; }
+    auto rectangle = args.value("rect").toObject();
+    QRect result(integer(rectangle,"x",-1000000,1000000), integer(rectangle,"y",-1000000,1000000),
+        integer(rectangle,"width",1,8192), integer(rectangle,"height",1,8192));
+    checkBitmapBudget(result); return result;
+}
+
 std::unique_ptr<KeyFrame> copyKeyForEdit(Layer* layer, int frame)
 {
     auto key = layer->getKeyFrameAt(frame);
@@ -657,6 +685,23 @@ QJsonObject AutomationBridge::execute(const QString& op, const QJsonObject& args
         return {{"protocol_version", 1}, {"application_version", QCoreApplication::applicationVersion()},
             {"operations", operations}, {"workspaces", QJsonArray::fromStringList(mWorkspaces)}, {"qualified_alpha", false}};
     }
+    if (op == "bitmap.inspect")
+    {
+        int index = integer(args,"index",0,mEditor->layers()->count()-1);
+        auto layer = dynamic_cast<LayerBitmap*>(mEditor->object()->getLayer(index));
+        int frame = integer(args,"frame",1,1000000);
+        require(layer && layer->keyExists(frame), "invalid_context", "An exact bitmap key is required");
+        auto copy = independentBitmap(layer->getBitmapImageAtFrame(frame)); auto bounds = copy.bounds();
+        QJsonArray points;
+        for (auto value : args.value("points").toArray())
+        {
+            auto point = value.toObject(); int x = point.value("x").toInt(), y = point.value("y").toInt();
+            QRgb pixel = qUnpremultiply(copy.pixel(x,y));
+            points.append(QJsonObject {{"x",x},{"y",y},{"rgba",QJsonArray {qRed(pixel),qGreen(pixel),qBlue(pixel),qAlpha(pixel)}}});
+        }
+        return {{"index",index},{"frame",frame},{"bounds",QJsonObject {{"x",bounds.x()},{"y",bounds.y()},{"width",bounds.width()},{"height",bounds.height()}}},
+            {"opacity",copy.getOpacity()},{"points",points}};
+    }
     if (op == "view.inspect")
     {
         auto view = mEditor->view(); auto at = view->translation();
@@ -1151,6 +1196,67 @@ QJsonObject AutomationBridge::execute(const QString& op, const QJsonObject& args
             }
         }
         image->calculateSelectionRect(); image->modification();
+        mEditor->object()->modification(); emit mEditor->framesModified();
+    }
+    else if (op.startsWith("bitmap."))
+    {
+        int index = integer(args, "index", 0, mEditor->layers()->count()-1);
+        auto layer = dynamic_cast<LayerBitmap*>(mEditor->object()->getLayer(index));
+        require(layer && layer->visible(), "invalid_context", "Bitmap edits require a visible bitmap layer");
+        auto bitmap = [&](LayerBitmap* source, int frame) {
+            require(source && source->keyExists(frame), "invalid_selection", "An exact bitmap key is required");
+            return source->getBitmapImageAtFrame(frame);
+        };
+        if (op == "bitmap.paper")
+        {
+            QList<QPair<BitmapImage*, BitmapImage>> prepared; qint64 pixels = 0;
+            for (auto value : args.value("frames").toArray())
+            {
+                auto image = bitmap(layer, value.toInt()); auto copy = independentBitmap(image);
+                auto bounds = copy.bounds(); pixels += qint64(bounds.width())*bounds.height();
+                require(pixels <= 4000000, "invalid_arguments", "Paper processing exceeds four million pixels");
+                prepared.append(qMakePair(image, copy));
+            }
+            for (auto& entry : prepared)
+            {
+                auto& copy = entry.second;
+                if (!copy.bounds().isEmpty()) { copy.scanToTransparent(&copy, args.value("threshold").toInt(),
+                    args.value("red").toBool(), args.value("green").toBool(), args.value("blue").toBool()); }
+                entry.first->clear(); entry.first->paste(&copy); entry.first->modification();
+            }
+        }
+        else
+        {
+            auto image = bitmap(layer, integer(args, "frame", 1, 1000000));
+            auto copy = independentBitmap(image); auto selection = bitmapRectangle(args, copy.bounds());
+            require(!copy.bounds().isEmpty() && copy.bounds().intersects(selection), "invalid_selection", "Bitmap region has no source content bounds");
+            BitmapImage part;
+            if (op == "bitmap.transform")
+            {
+                auto m = args.value("matrix").toArray();
+                QTransform transform(m[0].toDouble(), m[1].toDouble(), m[2].toDouble(), m[3].toDouble(), m[4].toDouble(), m[5].toDouble());
+                require(transform.isInvertible(), "invalid_arguments", "Bitmap transform must be invertible");
+                auto projected = transform.mapRect(QRectF(selection));
+                require(std::isfinite(projected.x()) && std::isfinite(projected.y()) && projected.width() <= 8192 && projected.height() <= 8192 &&
+                    std::abs(projected.x()) <= 1000000 && std::abs(projected.y()) <= 1000000, "invalid_arguments", "Transformed region exceeds bitmap bounds budget");
+                checkBitmapBudget(copy.bounds().united(projected.toAlignedRect()));
+                part = copy.transformed(selection, transform, args.value("smooth").toBool());
+                image->clear(selection); image->paste(&part); image->modification();
+            }
+            else if (op == "bitmap.copy")
+            {
+                int targetIndex = integer(args, "target_index", 0, mEditor->layers()->count()-1);
+                auto targetLayer = dynamic_cast<LayerBitmap*>(mEditor->object()->getLayer(targetIndex));
+                require(targetLayer && targetLayer->visible(), "invalid_context", "Copy destination must be a visible bitmap layer");
+                auto target = bitmap(targetLayer, integer(args, "target_frame", 1, 1000000));
+                auto destination = independentBitmap(target);
+                part = copy.copy(selection);
+                part.moveTopLeft(selection.topLeft()+QPoint(args.value("dx").toInt(), args.value("dy").toInt()));
+                checkBitmapBudget(destination.bounds().united(part.bounds()));
+                if (args.value("cut").toBool()) { image->clear(selection); image->modification(); }
+                target->paste(&part); target->modification();
+            }
+        }
         mEditor->object()->modification(); emit mEditor->framesModified();
     }
     else if (op == "content.clear")

@@ -88,3 +88,13 @@ to metadata before loading, and unchanged duration notifications do not create
 spurious revisions. Local qualification: official Qt 6.12 universal build, 79 native
 cases / 1,175 assertions; controller integration suite 66 passed with one Windows-only
 skip. These results do not establish complete UI coverage or release acceptance.
+
+
+Bitmap extensions add independent bounded RGBA inspection, native region/affine
+transforms, in-document region copy/cut and native paper processing. Exact existing
+keys and visible bitmap layers are required for edits. Region allocation budgets
+and a four-million-pixel paper budget are preflighted. Native opacity and system
+clipboard contents are preserved; content edits participate in document transactions.
+The shared registry now advertises 67 development operations. Local controller
+fixtures pass 72 tests with one Windows-only skip; platform qualification of the
+new bitmap source remains separate. This is not complete editor coverage.
