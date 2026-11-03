@@ -35,6 +35,7 @@ private:
     void changed(const QString& kind, bool documentChanged = true);
     void reconcileContent();
     QByteArray documentSignature() const;
+    bool documentGranted() const;
 
     MainWindow2* mWindow = nullptr;
     Editor* mEditor = nullptr;

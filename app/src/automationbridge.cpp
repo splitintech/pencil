@@ -637,6 +637,12 @@ void AutomationBridge::changed(const QString& kind, bool documentChanged)
 
 void AutomationBridge::reconcileContent()
 {
+    // Discovery/event/revocation probes remain usable after a human opens an
+    // ungranted file. They must not snapshot it or change its dirty state.
+    if (!documentGranted())
+    {
+        mContentSignature.clear(); mContentRevision = mRevision; return;
+    }
     auto signature = documentSignature();
     if (signature.isEmpty())
     {
@@ -661,10 +667,19 @@ void AutomationBridge::reconcileContent()
 
 QByteArray AutomationBridge::documentSignature() const
 {
+    if (!documentGranted()) { return {}; }
     // BitmapImage::image() can reload old backing pixels for an emptied live
     // key. Fingerprinting must use the same independent snapshot as undo.
     auto snapshot = mEditor->snapshot();
     return snapshot ? snapshot->contentSignature() : QByteArray();
+}
+
+bool AutomationBridge::documentGranted() const
+{
+    auto path = mEditor->object()->filePath();
+    if (path.isEmpty()) { return true; }
+    try { grantedPath(path, false); return true; }
+    catch (const Failure&) { return false; }
 }
 
 QString AutomationBridge::grantedPath(const QString& path, bool mustExist) const
