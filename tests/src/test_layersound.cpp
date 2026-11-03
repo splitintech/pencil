@@ -144,10 +144,18 @@ TEST_CASE("Sound decoder is destroyed before its borrowed input device")
     REQUIRE(!device.isNull());
     bool destroyed = false;
     bool deviceAlive = false;
-    QObject::connect(decoder, &QObject::destroyed, [&] {
-        destroyed = true;
-        deviceAlive = !device.isNull();
-    });
+    // Older QMediaPlayer destructors disconnect their observers before QObject
+    // emits destroyed(). Observe actual child destruction instead of a signal.
+    struct DeviceLifetimeProbe : QObject
+    {
+        QPointer<QIODevice> device;
+        bool& destroyed;
+        bool& alive;
+        DeviceLifetimeProbe(QObject* parent, QPointer<QIODevice> input, bool& didDestroy, bool& wasAlive)
+            : QObject(parent), device(input), destroyed(didDestroy), alive(wasAlive) {}
+        ~DeviceLifetimeProbe() override { destroyed = true; alive = !device.isNull(); }
+    };
+    new DeviceLifetimeProbe(decoder, device, destroyed, deviceAlive);
     clip.detachPlayer();
     REQUIRE(destroyed);
     REQUIRE(deviceAlive);
